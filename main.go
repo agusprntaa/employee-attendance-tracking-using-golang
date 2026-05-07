@@ -1,85 +1,65 @@
 package main
 
 import (
+	"absensi/config"
+	"absensi/database"
+	"absensi/repository"
+	"absensi/router"
 	"log"
+	"net/http"
 	"time"
-
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
-
-	"absensi_karyawan/attendance"
-	"absensi_karyawan/auth"
-	"absensi_karyawan/database"
-	"absensi_karyawan/employee"
-	// "absensi_karyawan/employee"  ← comment dulu
-	// "absensi_karyawan/qr"        ← comment dulu
 )
 
 func main() {
-	app := fiber.New()
-	app.Use(cors.New())
+	cfg := config.Load()
 
-	db := database.ConnectDB()
+	db, err := database.Connect(cfg)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
 
-	// Auth
-	authRepo := &auth.Repository{DB: db}
-	authService := &auth.Service{Repo: authRepo}
-	authHandler := &auth.Handler{Service: authService}
+	// ─── Background Goroutine: Refresh QR setiap 3 menit ─────────────────────
+	// Selaras dengan Backend 1 yang pakai slotWaktu = menit / 3
+	qrRepo := repository.NewQRRepo(db)
+	go func() {
+		// Generate QR saat server pertama kali start
+		refreshAllQR(qrRepo)
 
-	// Attendance
-	attendanceRepo := &attendance.Repository{DB: db}
-	attendanceService := &attendance.Service{Repo: attendanceRepo}
-	attendanceHandler := &attendance.Handler{Service: attendanceService}
+		// Refresh setiap 3 menit
+		ticker := time.NewTicker(3 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			refreshAllQR(qrRepo)
+		}
+	}()
 
-	// Employee — comment dulu sampai siap
-	employeeRepo := &employee.Repository{DB: db}
-	employeeHandler := &employee.Handler{Repo: employeeRepo}
-
-	loginLimiter := limiter.New(limiter.Config{
-		Max:        15,
-		Expiration: 15 * time.Minute,
-
-		LimitReached: func(c *fiber.Ctx) error {
-			retry := c.GetRespHeader("Retry-After")
-
-			return c.Status(429).JSON(fiber.Map{
-				"error":       "Terlalu banyak request",
-				"retry_after": retry, // dalam detik
-				"message":     "Coba lagi dalam " + retry + " detik",
-			})
-		},
-	})
-
-	// Public routes
-	app.Post("/login", loginLimiter, authHandler.Login)
-	app.Post("/refresh", authHandler.Refresh)
-	app.Post("/logout", authHandler.Logout)
-
-	// Protected routes
-	api := app.Group("/", auth.AuthMiddleware)
-
-	api.Post("/admin/create-user", auth.AdminOnly, authHandler.CreateUser)
-
-	// ── Employee (karyawan sendiri) ───────────────────
-	// GET  /employee/profile         → profil sendiri
-	// PATCH /employee/change-password → ubah password
-	api.Get("/employee/profile", employeeHandler.GetProfile)
-	api.Patch("/employee/change-password", employeeHandler.ChangePassword)
-
-	// Attendance routes — ini yang mau ditest
-	api.Post("/attendance/checkin", attendanceHandler.CheckIn)
-	api.Patch("/attendance/checkout", attendanceHandler.CheckOut)
-	api.Get("/attendance/today", attendanceHandler.GetToday)
-	api.Get("/attendance/history", attendanceHandler.GetHistory)
-
-	// Employee routes — comment dulu
-	// api.Get("/employee/profile",           employeeHandler.GetProfile)
-	// api.Patch("/employee/change-password", employeeHandler.ChangePassword)
-
-	// QR routes — comment dulu
-	// api.Get("/qr/today", auth.AdminOnly, qrHandler.GetTodayToken)
-
-	log.Println("Server running on http://localhost:3000")
-	log.Fatal(app.Listen(":3000"))
+	// ─── HTTP Server ──────────────────────────────────────────────────────────
+	r := router.SetupRouter(db, cfg)
+	log.Printf("Backend 2 (Admin Cabang) running on port %s", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
 }
+
+// refreshAllQR - refresh token QR semua cabang aktif
+func refreshAllQR(qrRepo *repository.QRRepo) {
+	branchIDs, err := qrRepo.GetAllActiveBranchIDs()
+	if err != nil {
+		log.Printf("[QR] Gagal ambil branch IDs: %v", err)
+		return
+	}
+	for _, branchID := range branchIDs {
+		qr, err := qrRepo.GetTodayQR(branchID)
+		if err != nil {
+			log.Printf("[QR] Gagal refresh QR cabang %d: %v", branchID, err)
+			continue
+		}
+		log.Printf("[QR] Cabang %d → slot %d, expires: %s",
+			branchID,
+			time.Now().Minute()/3,
+			qr.ExpiresAt.Format("15:04:05"),
+		)
+	}
+}
+

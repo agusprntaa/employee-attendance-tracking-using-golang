@@ -19,7 +19,7 @@ type Config struct {
 
 func Load() *Config {
 	cfg := &Config{
-		Port:        getEnv("PORT", "3001"),
+		Port:        getEnv("PORT", "3000"),
 		DBHost:      getEnv("DB_HOST", "localhost"),
 		DBPort:      getEnv("DB_PORT", "5432"),
 		DBUser:      getEnv("DB_USER", "postgres"),
