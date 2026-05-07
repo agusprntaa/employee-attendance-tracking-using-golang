@@ -5,12 +5,11 @@ import (
 	"absensi/models"
 	"absensi/repository"
 	"absensi/utils"
-	"crypto/sha256"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type EmployeeHandler struct {
@@ -104,7 +103,11 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "USERNAME_TAKEN", "Username sudah digunakan")
 	}
 
-	hashedPassword := hashPassword(req.Password)
+	// Hash password dengan bcrypt sama seperti Backend 1
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		return utils.InternalError(c, "Gagal memproses password")
+	}
 
 	id, err := h.empRepo.Create(&req, hashedPassword, *claims.BranchID)
 	if err != nil {
@@ -175,8 +178,12 @@ func (h *EmployeeHandler) Deactivate(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Karyawan berhasil dinonaktifkan")
 }
 
-func hashPassword(password string) string {
-	h := sha256.New()
-	h.Write([]byte(password))
-	return fmt.Sprintf("%x", h.Sum(nil))
+// hashPassword - pakai bcrypt sama seperti Backend 1
+// cost 10 sesuai: bcrypt.GenerateFromPassword([]byte("..."), 10)
+func hashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
 }
