@@ -5,7 +5,8 @@ import (
 	"absensi/models"
 	"absensi/repository"
 	"absensi/utils"
-	"net/http"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type BranchHandler struct {
@@ -17,46 +18,39 @@ func NewBranchHandler(br *repository.BranchRepo) *BranchHandler {
 }
 
 // GET /admin-cabang/branch
-func (h *BranchHandler) GetBranch(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+func (h *BranchHandler) GetBranch(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang")
 	}
 	branch, err := h.branchRepo.GetByID(*claims.BranchID)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data cabang")
-		return
+		return utils.InternalError(c, "Gagal mengambil data cabang")
 	}
 	if branch == nil {
-		utils.NotFound(w, "Cabang tidak ditemukan")
-		return
+		return utils.NotFound(c, "Cabang tidak ditemukan")
 	}
-	utils.Success(w, branch)
+	return utils.Success(c, branch)
 }
 
 // PATCH /admin-cabang/branch
-func (h *BranchHandler) UpdateBranch(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+func (h *BranchHandler) UpdateBranch(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang")
 	}
 	var req models.UpdateBranchRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 	if req.Name == "" {
-		utils.BadRequest(w, "NAME_REQUIRED", "Nama cabang wajib diisi")
-		return
+		return utils.BadRequest(c, "NAME_REQUIRED", "Nama cabang wajib diisi")
 	}
 	if req.RadiusMeter <= 0 {
 		req.RadiusMeter = 100
 	}
 	if err := h.branchRepo.Update(*claims.BranchID, &req); err != nil {
-		utils.InternalError(w, "Gagal update data cabang")
-		return
+		return utils.InternalError(c, "Gagal update data cabang")
 	}
-	utils.SuccessMessage(w, "Data cabang berhasil diupdate")
+	return utils.SuccessMessage(c, "Data cabang berhasil diupdate")
 }

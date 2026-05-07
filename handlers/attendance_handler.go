@@ -4,10 +4,10 @@ import (
 	"absensi/middleware"
 	"absensi/repository"
 	"absensi/utils"
-	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type AttendanceHandler struct {
@@ -18,51 +18,45 @@ func NewAttendanceHandler(ar *repository.AttendanceRepo) *AttendanceHandler {
 	return &AttendanceHandler{attendanceRepo: ar}
 }
 
-// GET /admin-cabang/attendance/today?search=budi&status=PRESENT
-func (h *AttendanceHandler) TodayAttendance(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/attendance/today
+func (h *AttendanceHandler) TodayAttendance(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	search := r.URL.Query().Get("search")
-	status := r.URL.Query().Get("status")
+	search := c.Query("search")
+	status := c.Query("status")
 
 	attendance, err := h.attendanceRepo.TodayByBranch(*claims.BranchID, search, status)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data absensi hari ini")
-		return
+		return utils.InternalError(c, "Gagal mengambil data absensi hari ini")
 	}
-	utils.Success(w, attendance)
+	return utils.Success(c, attendance)
 }
 
-// GET /admin-cabang/attendance/employee/{id}?page=1&limit=10
-func (h *AttendanceHandler) EmployeeHistory(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/attendance/employee/:id
+func (h *AttendanceHandler) EmployeeHistory(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	parts := strings.Split(strings.TrimSuffix(r.URL.Path, "/"), "/")
-	empID, err := strconv.Atoi(parts[len(parts)-1])
+	empID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID karyawan tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID karyawan tidak valid")
 	}
 
-	page, limit := utils.ParsePage(r)
+	page, limit := utils.ParsePage(c)
 
 	list, total, err := h.attendanceRepo.HistoryByEmployee(empID, *claims.BranchID, page, limit)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil riwayat absensi")
-		return
+		return utils.InternalError(c, "Gagal mengambil riwayat absensi")
 	}
 
-	utils.Success(w, map[string]interface{}{
+	return utils.Success(c, fiber.Map{
 		"data": list,
-		"pagination": map[string]int{
+		"pagination": fiber.Map{
 			"page":  page,
 			"limit": limit,
 			"total": total,
@@ -70,25 +64,17 @@ func (h *AttendanceHandler) EmployeeHistory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// GET /admin-cabang/reports/attendance?start_date=2026-04-01&end_date=2026-04-30&year=2026
-// Response lengkap:
-// - summary        → kartu ringkasan + perbandingan minggu lalu
-// - weekly_chart   → data bar chart Weekly Attendance (Mon-Fri)
-// - monthly_chart  → data line chart Monthly Trend (Jan-Des)
-// - daily          → data per hari
-// - division       → data per divisi (Department Performance)
-func (h *AttendanceHandler) AttendanceReport(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/reports/attendance
+func (h *AttendanceHandler) AttendanceReport(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	startDate := r.URL.Query().Get("start_date")
-	endDate := r.URL.Query().Get("end_date")
-	yearStr := r.URL.Query().Get("year")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	yearStr := c.Query("year")
 
-	// Default: bulan ini
 	now := time.Now()
 	if startDate == "" {
 		startDate = now.Format("2006-01") + "-01"
@@ -104,20 +90,17 @@ func (h *AttendanceHandler) AttendanceReport(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// 1. Summary stats + perbandingan minggu lalu
 	summary, err := h.attendanceRepo.ReportSummary(*claims.BranchID, startDate, endDate)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil summary laporan")
-		return
+		return utils.InternalError(c, "Gagal mengambil summary laporan")
 	}
 
-	// 2. Weekly chart (bar chart) — minggu ini
-	now2 := time.Now()
-	weekday := int(now2.Weekday())
+	// Weekly chart — minggu ini
+	weekday := int(now.Weekday())
 	if weekday == 0 {
 		weekday = 7
 	}
-	monday := now2.AddDate(0, 0, -(weekday - 1))
+	monday := now.AddDate(0, 0, -(weekday - 1))
 	sunday := monday.AddDate(0, 0, 6)
 	weeklyChart, err := h.attendanceRepo.WeeklyChartData(
 		*claims.BranchID,
@@ -125,36 +108,29 @@ func (h *AttendanceHandler) AttendanceReport(w http.ResponseWriter, r *http.Requ
 		sunday.Format("2006-01-02"),
 	)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data chart mingguan")
-		return
+		return utils.InternalError(c, "Gagal mengambil data chart mingguan")
 	}
 
-	// 3. Monthly chart (line chart) — per bulan dalam tahun ini
 	monthlyChart, err := h.attendanceRepo.MonthlyChartData(*claims.BranchID, year)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data chart bulanan")
-		return
+		return utils.InternalError(c, "Gagal mengambil data chart bulanan")
 	}
 
-	// 4. Daily report
 	dailyReports, err := h.attendanceRepo.ReportByDateRange(*claims.BranchID, startDate, endDate)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil laporan harian")
-		return
+		return utils.InternalError(c, "Gagal mengambil laporan harian")
 	}
 
-	// 5. Division report (Department Performance)
 	divReports, err := h.attendanceRepo.DivisionReportWithStatus(*claims.BranchID, startDate, endDate)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil laporan divisi")
-		return
+		return utils.InternalError(c, "Gagal mengambil laporan divisi")
 	}
 
-	utils.Success(w, map[string]interface{}{
-		"summary":       summary,       // kartu ringkasan atas
-		"weekly_chart":  weeklyChart,   // bar chart Weekly Attendance
-		"monthly_chart": monthlyChart,  // line chart Monthly Trend
-		"daily":         dailyReports,  // tabel per hari
-		"division":      divReports,    // tabel Department Performance
+	return utils.Success(c, fiber.Map{
+		"summary":       summary,
+		"weekly_chart":  weeklyChart,
+		"monthly_chart": monthlyChart,
+		"daily":         dailyReports,
+		"division":      divReports,
 	})
 }

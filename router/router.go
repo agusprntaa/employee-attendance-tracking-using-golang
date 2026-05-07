@@ -5,14 +5,25 @@ import (
 	"absensi/handlers"
 	"absensi/middleware"
 	"absensi/repository"
-	"absensi/utils"
+
 	"database/sql"
-	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
-func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
+func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	// Set DB ke middleware untuk lookup branch_id
 	middleware.SetDB(db)
+
+	app := fiber.New()
+
+	// ─── CORS support ngrok dan frontend ───────────────────────────────────────
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+		AllowHeaders: "Authorization,Content-Type,Accept,ngrok-skip-browser-warning",
+	}))
 
 	// ─── Repositories ──────────────────────────────────────────────────────────
 	empRepo        := repository.NewEmployeeRepo(db)
@@ -31,153 +42,54 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 	settingsH   := handlers.NewSettingsHandler(settingsRepo)
 	qrH         := handlers.NewQRHandler(qrRepo)
 
-	// ─── Main Mux ──────────────────────────────────────────────────────────────
-	mux := http.NewServeMux()
-
-	// Health check (public, tanpa auth)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		utils.Success(w, map[string]string{"status": "ok", "service": "backend2-admin-cabang"})
+	// ─── Health Check (public) ─────────────────────────────────────────────────
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "success", "data": fiber.Map{
+			"status": "ok", "service": "backend2-admin-cabang",
+		}})
 	})
 
-	// ─── Auth Middleware ────────────────────────────────────────────────────────
-	authMw := middleware.AuthMiddleware(cfg)
+	// ─── Protected Routes (wajib token + role admin) ───────────────────────────
+	admin := app.Group("/admin-cabang", middleware.AuthMiddleware(cfg), middleware.RequireAdminCabang)
 
-	// ─── Dashboard ─────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/dashboard", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(dashboardH.GetDashboard)(w, r)
-	})))
+	// Dashboard
+	admin.Get("/dashboard", dashboardH.GetDashboard)
 
-	// ─── QR Code ───────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/qr/today", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(qrH.GetTodayQR)(w, r)
-	})))
+	// QR Code
+	admin.Get("/qr/today", qrH.GetTodayQR)
+	admin.Post("/qr/regenerate", qrH.RegenerateQR)
 
-	mux.Handle("/admin-cabang/qr/regenerate", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(qrH.RegenerateQR)(w, r)
-	})))
+	// Employees
+	admin.Get("/employees", employeeH.List)
+	admin.Post("/employees", employeeH.Create)
+	admin.Get("/employees/:id", employeeH.GetByID)
+	admin.Patch("/employees/:id", employeeH.Update)
+	admin.Delete("/employees/:id", employeeH.Deactivate)
 
-	// ─── Employees ─────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/employees", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(employeeH.List)(w, r)
-		case http.MethodPost:
-			middleware.RequireAdminCabang(employeeH.Create)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
+	// Attendance
+	admin.Get("/attendance/today", attendanceH.TodayAttendance)
+	admin.Get("/attendance/employee/:id", attendanceH.EmployeeHistory)
 
-	mux.Handle("/admin-cabang/employees/", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(employeeH.GetByID)(w, r)
-		case http.MethodPatch:
-			middleware.RequireAdminCabang(employeeH.Update)(w, r)
-		case http.MethodDelete:
-			middleware.RequireAdminCabang(employeeH.Deactivate)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
+	// Reports
+	admin.Get("/reports/attendance", attendanceH.AttendanceReport)
 
-	// ─── Attendance ────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/attendance/today", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(attendanceH.TodayAttendance)(w, r)
-	})))
+	// Branch
+	admin.Get("/branch", branchH.GetBranch)
+	admin.Patch("/branch", branchH.UpdateBranch)
 
-	mux.Handle("/admin-cabang/attendance/employee/", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(attendanceH.EmployeeHistory)(w, r)
-	})))
+	// Settings
+	admin.Get("/settings", settingsH.GetSettings)
+	admin.Patch("/settings", settingsH.UpdateSettings)
 
-	// ─── Reports ───────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/reports/attendance", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(attendanceH.AttendanceReport)(w, r)
-	})))
+	// Schedules
+	admin.Get("/schedules", divisionH.GetSchedules)
 
-	// ─── Branch ────────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/branch", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(branchH.GetBranch)(w, r)
-		case http.MethodPatch:
-			middleware.RequireAdminCabang(branchH.UpdateBranch)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
+	// Divisions
+	admin.Get("/divisions", divisionH.List)
+	admin.Post("/divisions", divisionH.Create)
+	admin.Get("/divisions/:id", divisionH.GetByID)
+	admin.Patch("/divisions/:id", divisionH.Update)
+	admin.Delete("/divisions/:id", divisionH.Delete)
 
-	// ─── Settings ──────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/settings", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(settingsH.GetSettings)(w, r)
-		case http.MethodPatch:
-			middleware.RequireAdminCabang(settingsH.UpdateSettings)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
-
-	// ─── Schedules ─────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/schedules", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		middleware.RequireAdminCabang(divisionH.GetSchedules)(w, r)
-	})))
-
-	// ─── Divisions ─────────────────────────────────────────────────────────────
-	mux.Handle("/admin-cabang/divisions", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(divisionH.List)(w, r)
-		case http.MethodPost:
-			middleware.RequireAdminCabang(divisionH.Create)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
-
-	mux.Handle("/admin-cabang/divisions/", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			middleware.RequireAdminCabang(divisionH.GetByID)(w, r)
-		case http.MethodPatch:
-			middleware.RequireAdminCabang(divisionH.Update)(w, r)
-		case http.MethodDelete:
-			middleware.RequireAdminCabang(divisionH.Delete)(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})))
-
-	// ─── Wrap semua dengan CORS ─────────────────────────────────────────────────
-	// Support ngrok dan semua origin frontend
-	return middleware.CORS(mux)
+	return app
 }

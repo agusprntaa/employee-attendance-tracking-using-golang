@@ -5,8 +5,9 @@ import (
 	"absensi/models"
 	"absensi/repository"
 	"absensi/utils"
-	"net/http"
 	"strings"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type SettingsHandler struct {
@@ -18,40 +19,34 @@ func NewSettingsHandler(sr *repository.SettingsRepo) *SettingsHandler {
 }
 
 // GET /admin-cabang/settings
-func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+func (h *SettingsHandler) GetSettings(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
 	settings, err := h.settingsRepo.GetSettings(*claims.BranchID)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data settings")
-		return
+		return utils.InternalError(c, "Gagal mengambil data settings")
 	}
 
-	utils.Success(w, settings)
+	return utils.Success(c, settings)
 }
 
 // PATCH /admin-cabang/settings
-func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+func (h *SettingsHandler) UpdateSettings(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
 	var req models.UpdateSettingsRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 
-	// Validasi
 	if strings.TrimSpace(req.BranchName) == "" {
-		utils.BadRequest(w, "BRANCH_NAME_REQUIRED", "Nama cabang wajib diisi")
-		return
+		return utils.BadRequest(c, "BRANCH_NAME_REQUIRED", "Nama cabang wajib diisi")
 	}
 	if req.RadiusMeter <= 0 {
 		req.RadiusMeter = 100
@@ -69,13 +64,12 @@ func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request)
 		req.EndTime = "17:00:00"
 	}
 	if req.WorkDays == "" {
-		req.WorkDays = "Senin,Selasa,Rabu,Kamis,Jumat"
+		req.WorkDays = "1,2,3,4,5"
 	}
 
 	if err := h.settingsRepo.UpdateSettings(*claims.BranchID, &req); err != nil {
-		utils.InternalError(w, "Gagal menyimpan settings")
-		return
+		return utils.InternalError(c, "Gagal menyimpan settings")
 	}
 
-	utils.SuccessMessage(w, "Settings berhasil disimpan")
+	return utils.SuccessMessage(c, "Settings berhasil disimpan")
 }

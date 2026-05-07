@@ -6,10 +6,11 @@ import (
 	"absensi/repository"
 	"absensi/utils"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type DivisionHandler struct {
@@ -22,21 +23,17 @@ func NewDivisionHandler(dr *repository.DivisionRepo, er *repository.EmployeeRepo
 	return &DivisionHandler{divRepo: dr, empRepo: er, attendanceRepo: ar}
 }
 
-// GET /admin-cabang/schedules?start_date=2026-04-21&end_date=2026-04-27
-// Sesuai UI: tabel per karyawan per hari (Senin - Minggu), tanpa shift
-func (h *DivisionHandler) GetSchedules(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/schedules
+func (h *DivisionHandler) GetSchedules(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	// Ambil parameter minggu, default minggu ini
-	startDate := r.URL.Query().Get("start_date")
-	endDate := r.URL.Query().Get("end_date")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
 
 	if startDate == "" || endDate == "" {
-		// Default: minggu ini (Senin - Minggu)
 		now := time.Now()
 		weekday := int(now.Weekday())
 		if weekday == 0 {
@@ -50,11 +47,9 @@ func (h *DivisionHandler) GetSchedules(w http.ResponseWriter, r *http.Request) {
 
 	schedules, err := h.attendanceRepo.WeeklySchedule(*claims.BranchID, startDate, endDate)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data jadwal")
-		return
+		return utils.InternalError(c, "Gagal mengambil data jadwal")
 	}
 
-	// Format label minggu untuk UI: "April 21 - 27, 2026"
 	start, _ := time.Parse("2006-01-02", startDate)
 	end, _ := time.Parse("2006-01-02", endDate)
 	weekLabel := fmt.Sprintf("%s %d - %d, %d",
@@ -64,7 +59,7 @@ func (h *DivisionHandler) GetSchedules(w http.ResponseWriter, r *http.Request) {
 		start.Year(),
 	)
 
-	utils.Success(w, map[string]interface{}{
+	return utils.Success(c, fiber.Map{
 		"week":       weekLabel,
 		"start_date": startDate,
 		"end_date":   endDate,
@@ -73,44 +68,38 @@ func (h *DivisionHandler) GetSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /admin-cabang/divisions
-func (h *DivisionHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *DivisionHandler) List(c *fiber.Ctx) error {
 	divisions, err := h.divRepo.List()
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data divisi")
-		return
+		return utils.InternalError(c, "Gagal mengambil data divisi")
 	}
-	utils.Success(w, divisions)
+	return utils.Success(c, divisions)
 }
 
-// GET /admin-cabang/divisions/{id}
-func (h *DivisionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id, err := parseDivisionID(r.URL.Path)
+// GET /admin-cabang/divisions/:id
+func (h *DivisionHandler) GetByID(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID tidak valid")
 	}
 	div, err := h.divRepo.GetByID(id)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data divisi")
-		return
+		return utils.InternalError(c, "Gagal mengambil data divisi")
 	}
 	if div == nil {
-		utils.NotFound(w, "Divisi tidak ditemukan")
-		return
+		return utils.NotFound(c, "Divisi tidak ditemukan")
 	}
-	utils.Success(w, div)
+	return utils.Success(c, div)
 }
 
 // POST /admin-cabang/divisions
-func (h *DivisionHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *DivisionHandler) Create(c *fiber.Ctx) error {
 	var req models.CreateDivisionRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		utils.BadRequest(w, "NAME_REQUIRED", "Nama divisi wajib diisi")
-		return
+		return utils.BadRequest(c, "NAME_REQUIRED", "Nama divisi wajib diisi")
 	}
 	if req.WorkStart == "" {
 		req.WorkStart = "08:00:00"
@@ -129,54 +118,42 @@ func (h *DivisionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.divRepo.Create(&req)
 	if err != nil {
-		utils.InternalError(w, "Gagal membuat divisi")
-		return
+		return utils.InternalError(c, "Gagal membuat divisi")
 	}
-	utils.Created(w, map[string]interface{}{
+	return utils.Created(c, fiber.Map{
 		"id":      id,
 		"message": "Divisi berhasil dibuat",
 	})
 }
 
-// PATCH /admin-cabang/divisions/{id}
-func (h *DivisionHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := parseDivisionID(r.URL.Path)
+// PATCH /admin-cabang/divisions/:id
+func (h *DivisionHandler) Update(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID tidak valid")
 	}
 	var req models.CreateDivisionRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 	div, err := h.divRepo.GetByID(id)
 	if err != nil || div == nil {
-		utils.NotFound(w, "Divisi tidak ditemukan")
-		return
+		return utils.NotFound(c, "Divisi tidak ditemukan")
 	}
 	if err := h.divRepo.Update(id, &req); err != nil {
-		utils.InternalError(w, "Gagal update divisi")
-		return
+		return utils.InternalError(c, "Gagal update divisi")
 	}
-	utils.SuccessMessage(w, "Divisi berhasil diupdate")
+	return utils.SuccessMessage(c, "Divisi berhasil diupdate")
 }
 
-// DELETE /admin-cabang/divisions/{id}
-func (h *DivisionHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := parseDivisionID(r.URL.Path)
+// DELETE /admin-cabang/divisions/:id
+func (h *DivisionHandler) Delete(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID tidak valid")
 	}
 	if err := h.divRepo.Delete(id); err != nil {
-		utils.InternalError(w, "Gagal hapus divisi")
-		return
+		return utils.InternalError(c, "Gagal hapus divisi")
 	}
-	utils.SuccessMessage(w, "Divisi berhasil dihapus")
-}
-
-func parseDivisionID(path string) (int, error) {
-	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	return strconv.Atoi(parts[len(parts)-1])
+	return utils.SuccessMessage(c, "Divisi berhasil dihapus")
 }

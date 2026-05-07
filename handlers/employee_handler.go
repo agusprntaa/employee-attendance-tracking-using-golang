@@ -7,9 +7,10 @@ import (
 	"absensi/utils"
 	"crypto/sha256"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type EmployeeHandler struct {
@@ -20,25 +21,23 @@ func NewEmployeeHandler(er *repository.EmployeeRepo) *EmployeeHandler {
 	return &EmployeeHandler{empRepo: er}
 }
 
-// GET /admin-cabang/employees?page=1&limit=10&search=budi&status=active
-func (h *EmployeeHandler) List(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/employees
+func (h *EmployeeHandler) List(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	page, limit := utils.ParsePage(r)
-	search := r.URL.Query().Get("search")
-	status := r.URL.Query().Get("status")
+	page, limit := utils.ParsePage(c)
+	search := c.Query("search")
+	status := c.Query("status")
 
 	employees, total, err := h.empRepo.ListByBranch(*claims.BranchID, page, limit, search, status)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data karyawan")
-		return
+		return utils.InternalError(c, "Gagal mengambil data karyawan")
 	}
 
-	utils.Success(w, map[string]interface{}{
+	return utils.Success(c, fiber.Map{
 		"data": employees,
 		"pagination": models.Pagination{
 			Page:  page,
@@ -48,59 +47,47 @@ func (h *EmployeeHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /admin-cabang/employees/{id}
-func (h *EmployeeHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// GET /admin-cabang/employees/:id
+func (h *EmployeeHandler) GetByID(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	id, err := parseIDFromPath(r.URL.Path)
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID karyawan tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID karyawan tidak valid")
 	}
 
 	emp, err := h.empRepo.GetByID(id, *claims.BranchID)
 	if err != nil {
-		utils.InternalError(w, "Gagal mengambil data karyawan")
-		return
+		return utils.InternalError(c, "Gagal mengambil data karyawan")
 	}
 	if emp == nil {
-		utils.NotFound(w, "Karyawan tidak ditemukan di cabang ini")
-		return
+		return utils.NotFound(c, "Karyawan tidak ditemukan di cabang ini")
 	}
-	utils.Success(w, emp)
+	return utils.Success(c, emp)
 }
 
 // POST /admin-cabang/employees
-// Body: { "username", "password", "role", "tipe", "division_id" }
-// CATATAN: tidak ada field "name" karena tidak ada di database
-func (h *EmployeeHandler) Create(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
 	var req models.CreateEmployeeRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 
-	// Validasi
 	if strings.TrimSpace(req.Username) == "" {
-		utils.BadRequest(w, "USERNAME_REQUIRED", "Username wajib diisi")
-		return
+		return utils.BadRequest(c, "USERNAME_REQUIRED", "Username wajib diisi")
 	}
 	if len(req.Password) < 6 {
-		utils.BadRequest(w, "PASSWORD_TOO_SHORT", "Password minimal 6 karakter")
-		return
+		return utils.BadRequest(c, "PASSWORD_TOO_SHORT", "Password minimal 6 karakter")
 	}
 
-	// Default values
 	validRoles := map[string]bool{"karyawan": true, "admin_cabang": true, "admin": true}
 	if !validRoles[req.Role] {
 		req.Role = "karyawan"
@@ -109,118 +96,87 @@ func (h *EmployeeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.Tipe = "cabang"
 	}
 
-	// Cek username sudah dipakai
 	exists, err := h.empRepo.UsernameExists(req.Username)
 	if err != nil {
-		utils.InternalError(w, "Gagal memeriksa username")
-		return
+		return utils.InternalError(c, "Gagal memeriksa username")
 	}
 	if exists {
-		utils.BadRequest(w, "USERNAME_TAKEN", "Username sudah digunakan")
-		return
+		return utils.BadRequest(c, "USERNAME_TAKEN", "Username sudah digunakan")
 	}
 
-	// Hash password — SHA-256 sederhana
-	// ⚠️ PENTING: Sesuaikan dengan method hashing Backend 1
 	hashedPassword := hashPassword(req.Password)
 
 	id, err := h.empRepo.Create(&req, hashedPassword, *claims.BranchID)
 	if err != nil {
-		utils.InternalError(w, "Gagal membuat akun karyawan")
-		return
+		return utils.InternalError(c, "Gagal membuat akun karyawan")
 	}
 
-	utils.Created(w, map[string]interface{}{
+	return utils.Created(c, fiber.Map{
 		"id":      id,
 		"message": "Karyawan berhasil ditambahkan",
 	})
 }
 
-// PATCH /admin-cabang/employees/{id}
-// Body: { "role", "status", "division_id" }
-func (h *EmployeeHandler) Update(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// PATCH /admin-cabang/employees/:id
+func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	id, err := parseIDFromPath(r.URL.Path)
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID karyawan tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID karyawan tidak valid")
 	}
 
 	var req models.UpdateEmployeeRequest
-	if err := utils.ParseBody(r, &req); err != nil {
-		utils.BadRequest(w, "INVALID_BODY", "Request body tidak valid")
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
 
-	// Validasi status
 	validStatus := map[string]bool{"active": true, "inactive": true}
 	if req.Status != "" && !validStatus[req.Status] {
-		utils.BadRequest(w, "INVALID_STATUS", "Status harus 'active' atau 'inactive'")
-		return
+		return utils.BadRequest(c, "INVALID_STATUS", "Status harus 'active' atau 'inactive'")
 	}
 
 	emp, err := h.empRepo.GetByID(id, *claims.BranchID)
 	if err != nil || emp == nil {
-		utils.NotFound(w, "Karyawan tidak ditemukan di cabang ini")
-		return
+		return utils.NotFound(c, "Karyawan tidak ditemukan di cabang ini")
 	}
 
 	if err := h.empRepo.Update(id, *claims.BranchID, &req); err != nil {
-		utils.InternalError(w, "Gagal mengupdate data karyawan")
-		return
+		return utils.InternalError(c, "Gagal mengupdate data karyawan")
 	}
 
-	utils.SuccessMessage(w, "Data karyawan berhasil diupdate")
+	return utils.SuccessMessage(c, "Data karyawan berhasil diupdate")
 }
 
-// DELETE /admin-cabang/employees/{id} → set status = inactive
-func (h *EmployeeHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
+// DELETE /admin-cabang/employees/:id
+func (h *EmployeeHandler) Deactivate(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
 	if claims.BranchID == nil {
-		utils.BadRequest(w, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
-		return
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
-	id, err := parseIDFromPath(r.URL.Path)
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		utils.BadRequest(w, "INVALID_ID", "ID karyawan tidak valid")
-		return
+		return utils.BadRequest(c, "INVALID_ID", "ID karyawan tidak valid")
 	}
 
 	emp, err := h.empRepo.GetByID(id, *claims.BranchID)
 	if err != nil || emp == nil {
-		utils.NotFound(w, "Karyawan tidak ditemukan di cabang ini")
-		return
+		return utils.NotFound(c, "Karyawan tidak ditemukan di cabang ini")
 	}
 
 	if err := h.empRepo.Deactivate(id, *claims.BranchID); err != nil {
-		utils.InternalError(w, "Gagal menonaktifkan karyawan")
-		return
+		return utils.InternalError(c, "Gagal menonaktifkan karyawan")
 	}
 
-	utils.SuccessMessage(w, "Karyawan berhasil dinonaktifkan")
+	return utils.SuccessMessage(c, "Karyawan berhasil dinonaktifkan")
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// hashPassword - SHA-256 sederhana
-// ⚠️ WAJIB disesuaikan dengan cara Backend 1 menyimpan password
-// Jika Backend 1 pakai bcrypt: ganti dengan bcrypt.GenerateFromPassword
 func hashPassword(password string) string {
 	h := sha256.New()
 	h.Write([]byte(password))
 	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func parseIDFromPath(path string) (int, error) {
-	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	if len(parts) == 0 {
-		return 0, fmt.Errorf("no id in path")
-	}
-	return strconv.Atoi(parts[len(parts)-1])
 }
