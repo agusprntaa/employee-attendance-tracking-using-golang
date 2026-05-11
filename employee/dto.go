@@ -14,7 +14,7 @@ type ChangePasswordRequest struct {
 type CreateEmployeeRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
-	Name       string `json:"name"`
+	Name       string `json:"FullName"`
 	Role       string `json:"role"` // "karyawan" / "admin_cabang" / "super_admin"
 	Tipe       string `json:"tipe"` // "pusat" / "cabang"
 	BranchID   int    `json:"branch_id"`

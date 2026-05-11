@@ -45,9 +45,8 @@ func (r *Repository) SaveRefreshToken(userID int, token string, exp time.Time) e
 
 // ValidateRefreshToken — return 4 nilai: userID, role, branchID, error
 func (r *Repository) ValidateRefreshToken(token string) (int, string, int, error) {
-	var userID int
+	var userID, branchID int
 	var role string
-	var branchID int
 
 	err := r.DB.QueryRow(`
 		SELECT rt.employee_id, e.role, COALESCE(e.branch_id, 0)
@@ -63,10 +62,22 @@ func (r *Repository) DeleteRefreshToken(token string) {
 	r.DB.Exec(`DELETE FROM refresh_tokens WHERE token = $1`, token)
 }
 
-func (r *Repository) CreateUser(username, password, name, role, tipe string) error {
+func (r *Repository) CreateUser(username, password, name, role, tipe string, branchID, divisionID int) error {
 	_, err := r.DB.Exec(`
-		INSERT INTO employees (username, password, name, role, tipe)
-		VALUES ($1, $2, $3, $4, $5)
-	`, username, password, name, role, tipe)
+		INSERT INTO employees (username, password, name, role, tipe, branch_id, division_id)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, 0), NULLIF($7, 0))
+	`, username, password, name, role, tipe, branchID, divisionID)
 	return err
+}
+
+// ─────────────────────────────────────────────────────────────
+// UsernameExists — cek apakah username sudah dipakai
+// Dipanggil di service sebelum insert user baru
+// ─────────────────────────────────────────────────────────────
+func (r *Repository) UsernameExists(username string) (bool, error) {
+	var count int
+	err := r.DB.QueryRow(`
+		SELECT COUNT(*) FROM employees WHERE username = $1
+	`, username).Scan(&count)
+	return count > 0, err
 }

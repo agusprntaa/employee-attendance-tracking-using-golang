@@ -68,10 +68,19 @@ func (s *Service) Logout(refreshToken string) {
 	s.Repo.DeleteRefreshToken(refreshToken)
 }
 
-func (s *Service) CreateUser(username, password, name, role, tipe string) error {
+func (s *Service) CreateUser(username, password, name, role, tipe string, branchID, divisionID int) error {
+	// Cek username sudah dipakai belum
+	exists, err := s.Repo.UsernameExists(username)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("username already taken")
+	}
+
 	hashed, err := utils.HashPassword(password)
 	if err != nil {
 		return err
 	}
-	return s.Repo.CreateUser(username, hashed, name, role, tipe)
+	return s.Repo.CreateUser(username, hashed, name, role, tipe, branchID, divisionID)
 }

@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"absensi/models"
+	"absensi_karyawan/models"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -18,39 +18,41 @@ func NewAttendanceRepo(db *sql.DB) *AttendanceRepo {
 // TodayByBranch - absensi hari ini untuk dashboard
 // Semua kolom sesuai tabel attendance di DB
 func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string) ([]models.Attendance, error) {
-	where := `WHERE a.branch_id = $1 AND a.date = CURRENT_DATE`
+
+	where := `WHERE e.branch_id = $1 AND a.date = CURRENT_DATE`
 	args := []interface{}{branchID}
 	argIdx := 2
 
 	if search != "" {
-		// Cari berdasarkan username karena tidak ada kolom name di employees
 		where += fmt.Sprintf(` AND e.username ILIKE $%d`, argIdx)
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
+
 	if statusFilter != "" && statusFilter != "all" && statusFilter != "All" {
 		where += fmt.Sprintf(` AND a.status = $%d`, argIdx)
 		args = append(args, statusFilter)
+		argIdx++
 	}
 
 	query := fmt.Sprintf(`
 		SELECT 
-			a.id,
-			a.employee_id,
-			e.username,
-			a.date::text,
-			COALESCE(a.work_mode, ''),
-			a.work_type,
-			a.status,
-			a.check_in,
-			a.check_out,
-			a.check_in_lat,
-			a.check_in_lon,
-			a.late_minutes,
-			a.distance_meter,
-			a.is_auto_checkout,
-			COALESCE(a.wfa_reason, ''),
-			COALESCE(a.early_leave_reason, '')
+			 a.id,
+    a.employee_id,
+    e.username,
+    a.date::text,
+    a.work_type,
+    a.status,
+    a.check_in,
+    a.check_out,
+    a.check_in_lat,
+    a.check_in_lon,
+    COALESCE(a.late_minutes, 0),
+    a.distance_meter,
+    a.is_auto_checkout,
+    COALESCE(a.wfa_reason, ''),
+    COALESCE(a.early_leave_reason, ''),
+    e.branch_id
 		FROM attendance a
 		JOIN employees e ON a.employee_id = e.id
 		%s
@@ -64,14 +66,15 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 	defer rows.Close()
 
 	var list []models.Attendance
+
 	for rows.Next() {
 		var a models.Attendance
+
 		err := rows.Scan(
 			&a.ID,
 			&a.EmployeeID,
 			&a.EmployeeUsername,
 			&a.Date,
-			&a.WorkMode,
 			&a.WorkType,
 			&a.Status,
 			&a.CheckIn,
@@ -83,110 +86,147 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 			&a.IsAutoCheckout,
 			&a.WFAReason,
 			&a.EarlyLeaveReason,
+			&a.BranchID,
 		)
+
 		if err != nil {
-			continue
+			return nil, err
 		}
+
 		list = append(list, a)
 	}
+
 	return list, nil
 }
 
 // DashboardStats - statistik absensi hari ini per cabang
 func (r *AttendanceRepo) DashboardStats(branchID int) (*models.DashboardStats, error) {
+
 	stats := &models.DashboardStats{}
 
-	// Total karyawan aktif di cabang ini
-	r.db.QueryRow(`
-		SELECT COUNT(*) FROM employees 
-		WHERE branch_id = $1 AND status = 'active'
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM employees
+		WHERE branch_id = $1
+		AND status = 'active'
 	`, branchID).Scan(&stats.TotalEmployee)
 
-	// Hitung per status hari ini
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := r.db.Query(`
-		SELECT status, COUNT(*) 
-		FROM attendance 
-		WHERE branch_id = $1 AND date = CURRENT_DATE
+		SELECT status, COUNT(*)
+		FROM attendance
+		WHERE branch_id = $1
+		AND date = CURRENT_DATE
 		GROUP BY status
 	`, branchID)
+
 	if err != nil {
-		return stats, nil
+		return nil, err
 	}
+
 	defer rows.Close()
 
 	checkedIn := 0
+
 	for rows.Next() {
+
 		var status string
 		var count int
-		rows.Scan(&status, &count)
+
+		err := rows.Scan(&status, &count)
+		if err != nil {
+			return nil, err
+		}
+
 		switch status {
 		case "PRESENT", "EARLY_LEAVE":
 			stats.Present += count
 			checkedIn += count
+
 		case "LATE":
 			stats.Late += count
 			checkedIn += count
+
 		case "WFA":
 			stats.WFA += count
 			checkedIn += count
 		}
 	}
+
 	stats.Absent = stats.TotalEmployee - checkedIn
+
 	if stats.Absent < 0 {
 		stats.Absent = 0
 	}
+
 	return stats, nil
 }
 
 // HistoryByEmployee - riwayat absensi satu karyawan (paginated)
 func (r *AttendanceRepo) HistoryByEmployee(employeeID, branchID, page, limit int) ([]models.Attendance, int, error) {
+
 	offset := (page - 1) * limit
 
 	var total int
-	r.db.QueryRow(`
-		SELECT COUNT(*) FROM attendance a
-		JOIN employees e ON a.employee_id = e.id
-		WHERE a.employee_id = $1 AND e.branch_id = $2
-	`, employeeID, branchID).Scan(&total)
 
-	rows, err := r.db.Query(`
-		SELECT 
-			a.id,
-			a.employee_id,
-			e.username,
-			a.date::text,
-			COALESCE(a.work_mode, ''),
-			a.work_type,
-			a.status,
-			a.check_in,
-			a.check_out,
-			a.check_in_lat,
-			a.check_in_lon,
-			a.late_minutes,
-			a.distance_meter,
-			a.is_auto_checkout,
-			COALESCE(a.wfa_reason, ''),
-			COALESCE(a.early_leave_reason, '')
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
 		FROM attendance a
 		JOIN employees e ON a.employee_id = e.id
-		WHERE a.employee_id = $1 AND e.branch_id = $2
-		ORDER BY a.date DESC
-		LIMIT $3 OFFSET $4
-	`, employeeID, branchID, limit, offset)
+		WHERE a.employee_id = $1
+		AND e.branch_id = $2
+	`, employeeID, branchID).Scan(&total)
+
 	if err != nil {
 		return nil, 0, err
 	}
+
+	rows, err := r.db.Query(`
+		SELECT 
+		 a.id,
+    a.employee_id,
+    e.username,
+    a.date::text,
+    a.work_type,
+    a.status,
+    a.check_in,
+    a.check_out,
+    a.check_in_lat,
+    a.check_in_lon,
+    COALESCE(a.late_minutes, 0),
+    a.distance_meter,
+    a.is_auto_checkout,
+    COALESCE(a.wfa_reason, ''),
+    COALESCE(a.early_leave_reason, ''),
+    e.branch_id
+		FROM attendance a
+		JOIN employees e ON a.employee_id = e.id
+		WHERE a.employee_id = $1
+		AND e.branch_id = $2
+		ORDER BY a.date DESC
+		LIMIT $3 OFFSET $4
+	`, employeeID, branchID, limit, offset)
+
+	if err != nil {
+		return nil, 0, err
+	}
+
 	defer rows.Close()
 
 	var list []models.Attendance
+
 	for rows.Next() {
+
 		var a models.Attendance
-		rows.Scan(
+
+		err := rows.Scan(
 			&a.ID,
 			&a.EmployeeID,
 			&a.EmployeeUsername,
 			&a.Date,
-			&a.WorkMode,
 			&a.WorkType,
 			&a.Status,
 			&a.CheckIn,
@@ -198,9 +238,16 @@ func (r *AttendanceRepo) HistoryByEmployee(employeeID, branchID, page, limit int
 			&a.IsAutoCheckout,
 			&a.WFAReason,
 			&a.EarlyLeaveReason,
+			&a.BranchID,
 		)
+
+		if err != nil {
+			return nil, 0, err
+		}
+
 		list = append(list, a)
 	}
+
 	return list, total, nil
 }
 
@@ -385,14 +432,17 @@ func percentChange(prev, current int) float64 {
 		}
 		return 0
 	}
+
 	return roundFloat(float64(current-prev)/float64(prev)*100, 1)
 }
 
 func roundFloat(val float64, precision int) float64 {
 	p := 1.0
+
 	for i := 0; i < precision; i++ {
 		p *= 10
 	}
+
 	return float64(int(val*p+0.5)) / p
 }
 
@@ -466,13 +516,13 @@ func (r *AttendanceRepo) WeeklySchedule(branchID int, startDate, endDate string)
 		// Cek work_days untuk tau hari kerja atau libur
 		workDays := emp.WorkDays // contoh: "1,2,3,4,5"
 
-		schedule.Monday    = getDayStatus(dayMap, 1, workDays)
-		schedule.Tuesday   = getDayStatus(dayMap, 2, workDays)
+		schedule.Monday = getDayStatus(dayMap, 1, workDays)
+		schedule.Tuesday = getDayStatus(dayMap, 2, workDays)
 		schedule.Wednesday = getDayStatus(dayMap, 3, workDays)
-		schedule.Thursday  = getDayStatus(dayMap, 4, workDays)
-		schedule.Friday    = getDayStatus(dayMap, 5, workDays)
-		schedule.Saturday  = getDayStatus(dayMap, 6, workDays)
-		schedule.Sunday    = getDayStatus(dayMap, 0, workDays)
+		schedule.Thursday = getDayStatus(dayMap, 4, workDays)
+		schedule.Friday = getDayStatus(dayMap, 5, workDays)
+		schedule.Saturday = getDayStatus(dayMap, 6, workDays)
+		schedule.Sunday = getDayStatus(dayMap, 0, workDays)
 
 		schedules = append(schedules, schedule)
 	}
@@ -550,6 +600,7 @@ func (r *AttendanceRepo) MonthlyChartData(branchID int, year int) ([]map[string]
 		  AND EXTRACT(YEAR FROM a.date) = $2
 		GROUP BY TO_CHAR(a.date, 'Mon'), EXTRACT(MONTH FROM a.date)
 		ORDER BY month_num
+		
 	`, branchID, year)
 	if err != nil {
 		return nil, err

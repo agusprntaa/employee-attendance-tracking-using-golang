@@ -3,6 +3,7 @@ package attendance
 import (
 	"absensi_karyawan/utils"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -73,18 +74,38 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 	// > 200m = tolak keras
 	// 50-200m = bisa lanjut tapi frontend tampilkan warning
 	locStatus, err := utils.ValidateLocation(
-		req.Lat, req.Lon, // dari FE
-		detail.BranchLat, detail.BranchLon, // dari DB
-		detail.RadiusMeter, // dari DB
-		req.Accuracy,       // dari device
+		req.Lat,
+		req.Lon,
+		detail.BranchLat,
+		detail.BranchLon,
+		detail.RadiusMeter,
+		req.Accuracy,
 	)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if !locStatus.IsValid {
+
 		if req.Accuracy > 200 {
 			return nil, ErrGPSAccuracyLow
 		}
+
+		log.Println("===== LOCATION DEBUG =====")
+
+		log.Println("USER LAT :", req.Lat)
+		log.Println("USER LON :", req.Lon)
+
+		log.Println("BRANCH LAT :", detail.BranchLat)
+		log.Println("BRANCH LON :", detail.BranchLon)
+
+		log.Println("DISTANCE :", locStatus.Distance)
+
+		log.Println("MAX RADIUS :", detail.RadiusMeter)
+
+		log.Println("GPS ACCURACY :", req.Accuracy)
+
 		return nil, ErrOutOfRadius
 	}
 

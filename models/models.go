@@ -3,11 +3,11 @@ package models
 import "time"
 
 // ─── EMPLOYEE ────────────────────────────────────────────────────────────────
-// Tabel: id, username, password, role, tipe, division_id, branch_id, status, created_at
 
 type Employee struct {
 	ID         int       `json:"id"`
 	Username   string    `json:"username"`
+	Name       string    `json:"name"` // tambah Name
 	Role       string    `json:"role"`
 	Tipe       string    `json:"tipe"`
 	DivisionID *int      `json:"division_id,omitempty"`
@@ -19,9 +19,10 @@ type Employee struct {
 type EmployeeDetail struct {
 	ID           int       `json:"id"`
 	Username     string    `json:"username"`
+	Name         string    `json:"name"` // tambah Name
 	Role         string    `json:"role"`
 	Tipe         string    `json:"tipe"`
-	Status       string    `json:"status"`
+	Status       string    `json:"status,omitempty"`
 	DivisionID   *int      `json:"division_id,omitempty"`
 	DivisionName string    `json:"division_name,omitempty"`
 	BranchID     *int      `json:"branch_id,omitempty"`
@@ -32,22 +33,20 @@ type EmployeeDetail struct {
 type CreateEmployeeRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+	Name       string `json:"FullName"` // tambah Name — field ini yang muncul di form FE
 	Role       string `json:"role"`
 	Tipe       string `json:"tipe"`
 	DivisionID *int   `json:"division_id"`
 }
 
 type UpdateEmployeeRequest struct {
+	Name       string `json:"name"` // tambah Name
 	Role       string `json:"role"`
 	Status     string `json:"status"`
 	DivisionID *int   `json:"division_id"`
 }
 
 // ─── BRANCH ──────────────────────────────────────────────────────────────────
-// Tabel: id, name, address, latitude, longitude, radius_meter
-//        + kolom baru: auto_refresh_qr, require_admin_approval,
-//                      admin_email, email_notifications,
-//                      late_arrival_alerts, weekly_reports
 
 type Branch struct {
 	ID                   int     `json:"id"`
@@ -73,7 +72,6 @@ type UpdateBranchRequest struct {
 }
 
 // ─── DIVISION ────────────────────────────────────────────────────────────────
-// Tabel: id, name, work_days, work_start, work_end, late_tolerance_min, checkin_cutoff_min
 
 type Division struct {
 	ID               int    `json:"id"`
@@ -95,9 +93,6 @@ type CreateDivisionRequest struct {
 }
 
 // ─── ATTENDANCE ──────────────────────────────────────────────────────────────
-// Tabel: id, employee_id, date, check_in, check_out, check_in_lat, check_in_lon,
-//        distance_meter, status, late_minutes, work_mode, work_type,
-//        wfa_reason, early_leave_reason, is_auto_checkout, branch_id
 
 type Attendance struct {
 	ID               int        `json:"id"`
@@ -119,7 +114,7 @@ type Attendance struct {
 	BranchID         *int       `json:"branch_id,omitempty"`
 }
 
-// ─── DASHBOARD STATS ─────────────────────────────────────────────────────────
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
 type DashboardStats struct {
 	TotalEmployee int `json:"total_employee"`
@@ -130,7 +125,6 @@ type DashboardStats struct {
 }
 
 // ─── QR CODE ─────────────────────────────────────────────────────────────────
-// Tabel: id, token, branch_id, date, expires_at, created_at
 
 type QRData struct {
 	Token     string    `json:"token"`
@@ -140,16 +134,15 @@ type QRData struct {
 }
 
 type QRResponse struct {
-	Token      string `json:"token"`
-	BranchID   int    `json:"branch_id"`
-	Date       string `json:"date"`
-	ExpiresAt  string `json:"expires_at"`
-	QRContent  string `json:"qr_content"`  // JSON string → Frontend render jadi gambar QR
-	RefreshIn  int    `json:"refresh_in"`  // detik sampai refresh berikutnya
+	Token     string `json:"token"`
+	BranchID  int    `json:"branch_id"`
+	Date      string `json:"date"`
+	ExpiresAt string `json:"expires_at"`
+	QRContent string `json:"qr_content"`
+	RefreshIn int    `json:"refresh_in"`
 }
 
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
-// Gabungan dari tabel branches (semua kolom) + divisions
 
 type SettingsResponse struct {
 	BranchInformation BranchInformation `json:"branch_information"`
@@ -189,30 +182,23 @@ type NotifSettings struct {
 }
 
 type UpdateSettingsRequest struct {
-	// Branch Information
-	BranchName  string  `json:"branch_name"`
-	Address     string  `json:"address"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	RadiusMeter int     `json:"radius_meter"`
-
-	// Working Hours
-	DivisionID       *int   `json:"division_id"`
-	StartTime        string `json:"start_time"`
-	EndTime          string `json:"end_time"`
-	LateThresholdMin int    `json:"late_threshold_min"`
-	CheckinCutoffMin int    `json:"checkin_cutoff_min"`
-	WorkDays         string `json:"work_days"`
-
-	// Security → disimpan ke tabel branches
-	AutoRefreshQR        bool `json:"auto_refresh_qr"`
-	RequireAdminApproval bool `json:"require_admin_approval"`
-
-	// Notifications → disimpan ke tabel branches
-	AdminEmail         string `json:"admin_email"`
-	EmailNotifications bool   `json:"email_notifications"`
-	LateArrivalAlerts  bool   `json:"late_arrival_alerts"`
-	WeeklyReports      bool   `json:"weekly_reports"`
+	BranchName           string  `json:"branch_name"`
+	Address              string  `json:"address"`
+	Latitude             float64 `json:"latitude"`
+	Longitude            float64 `json:"longitude"`
+	RadiusMeter          int     `json:"radius_meter"`
+	DivisionID           *int    `json:"division_id"`
+	StartTime            string  `json:"start_time"`
+	EndTime              string  `json:"end_time"`
+	LateThresholdMin     int     `json:"late_threshold_min"`
+	CheckinCutoffMin     int     `json:"checkin_cutoff_min"`
+	WorkDays             string  `json:"work_days"`
+	AutoRefreshQR        bool    `json:"auto_refresh_qr"`
+	RequireAdminApproval bool    `json:"require_admin_approval"`
+	AdminEmail           string  `json:"admin_email"`
+	EmailNotifications   bool    `json:"email_notifications"`
+	LateArrivalAlerts    bool    `json:"late_arrival_alerts"`
+	WeeklyReports        bool    `json:"weekly_reports"`
 }
 
 // ─── REPORT ──────────────────────────────────────────────────────────────────
@@ -242,20 +228,15 @@ type Pagination struct {
 
 // ─── REPORT SUMMARY ──────────────────────────────────────────────────────────
 
-// ReportSummary - kartu ringkasan di bagian atas halaman Reports
 type ReportSummary struct {
-	// Minggu ini
 	AverageAttendanceRate float64 `json:"average_attendance_rate"`
 	TotalPresent          int     `json:"total_present"`
 	LateArrivals          int     `json:"late_arrivals"`
-
-	// Perbandingan dengan minggu lalu (persen, + naik / - turun)
-	AttendanceRateChange float64 `json:"attendance_rate_change"`
-	TotalPresentChange   float64 `json:"total_present_change"`
-	LateArrivalsChange   float64 `json:"late_arrivals_change"`
+	AttendanceRateChange  float64 `json:"attendance_rate_change"`
+	TotalPresentChange    float64 `json:"total_present_change"`
+	LateArrivalsChange    float64 `json:"late_arrivals_change"`
 }
 
-// FullReportResponse - response lengkap halaman Reports
 type FullReportResponse struct {
 	Summary  ReportSummary      `json:"summary"`
 	Daily    []AttendanceReport `json:"daily"`

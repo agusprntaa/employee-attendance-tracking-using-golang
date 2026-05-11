@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"absensi/models"
+	"absensi_karyawan/models"
 	"database/sql"
 )
 

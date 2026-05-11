@@ -106,6 +106,7 @@ func (h *Handler) GetToday(c *fiber.Ctx) error {
 
 	result, err := h.Service.GetToday(employeeID)
 	if err != nil {
+
 		return c.Status(500).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Gagal mengambil data absensi",
