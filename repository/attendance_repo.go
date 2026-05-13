@@ -19,44 +19,55 @@ func NewAttendanceRepo(db *sql.DB) *AttendanceRepo {
 // Semua kolom sesuai tabel attendance di DB
 func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string) ([]models.Attendance, error) {
 
-	where := `WHERE e.branch_id = $1 AND a.date = CURRENT_DATE`
+	where := `WHERE e.branch_id = $1`
 	args := []interface{}{branchID}
 	argIdx := 2
 
 	if search != "" {
-		where += fmt.Sprintf(` AND e.username ILIKE $%d`, argIdx)
-		args = append(args, "%"+search+"%")
-		argIdx++
+		// Search by name atau username
+		where += fmt.Sprintf(` AND (e.name ILIKE $%d OR e.username ILIKE $%d)`, argIdx, argIdx+1)
+		args = append(args, "%"+search+"%", "%"+search+"%")
+		argIdx += 2
 	}
 
 	if statusFilter != "" && statusFilter != "all" && statusFilter != "All" {
-		where += fmt.Sprintf(` AND a.status = $%d`, argIdx)
-		args = append(args, statusFilter)
-		argIdx++
+		if statusFilter == "BELUM_ABSEN" || statusFilter == "belum_absen" {
+			// Filter khusus: hanya yang belum absen (tidak ada record attendance hari ini)
+			where += ` AND a.id IS NULL`
+		} else {
+			where += fmt.Sprintf(` AND a.status = $%d`, argIdx)
+			args = append(args, statusFilter)
+			argIdx++
+		}
 	}
 
 	query := fmt.Sprintf(`
 		SELECT 
-			 a.id,
-    a.employee_id,
-    e.username,
-    a.date::text,
-    a.work_type,
-    a.status,
-    a.check_in,
-    a.check_out,
-    a.check_in_lat,
-    a.check_in_lon,
-    COALESCE(a.late_minutes, 0),
-    a.distance_meter,
-    a.is_auto_checkout,
-    COALESCE(a.wfa_reason, ''),
-    COALESCE(a.early_leave_reason, ''),
-    e.branch_id
-		FROM attendance a
-		JOIN employees e ON a.employee_id = e.id
+			COALESCE(a.id, 0)                        AS id,
+			e.id                                      AS employee_id,
+			COALESCE(e.name, e.username)              AS employee_name,
+			COALESCE(a.date::text, CURRENT_DATE::text) AS date,
+			COALESCE(a.work_type, '')                 AS work_type,
+			COALESCE(a.status, 'BELUM_ABSEN')         AS status,
+			a.check_in,
+			a.check_out,
+			a.check_in_lat,
+			a.check_in_lon,
+			COALESCE(a.late_minutes, 0)               AS late_minutes,
+			a.distance_meter,
+			COALESCE(a.is_auto_checkout, false)        AS is_auto_checkout,
+			COALESCE(a.wfa_reason, '')                AS wfa_reason,
+			COALESCE(a.early_leave_reason, '')        AS early_leave_reason,
+			e.branch_id
+		FROM employees e
+		LEFT JOIN attendance a 
+			ON a.employee_id = e.id 
+			AND a.date = CURRENT_DATE
 		%s
-		ORDER BY a.check_in DESC NULLS LAST
+		ORDER BY 
+			CASE WHEN a.id IS NULL THEN 1 ELSE 0 END,
+			a.check_in DESC NULLS LAST,
+			e.name ASC
 	`, where)
 
 	rows, err := r.db.Query(query, args...)
@@ -66,10 +77,8 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 	defer rows.Close()
 
 	var list []models.Attendance
-
 	for rows.Next() {
 		var a models.Attendance
-
 		err := rows.Scan(
 			&a.ID,
 			&a.EmployeeID,
@@ -88,11 +97,9 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 			&a.EarlyLeaveReason,
 			&a.BranchID,
 		)
-
 		if err != nil {
 			return nil, err
 		}
-
 		list = append(list, a)
 	}
 

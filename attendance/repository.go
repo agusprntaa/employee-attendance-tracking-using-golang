@@ -2,6 +2,7 @@ package attendance
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -28,21 +29,21 @@ type EmployeeDetail struct {
 }
 
 type AttendanceRecord struct {
-	ID               int
-	EmployeeID       int
-	BranchID         int
-	Date             string
-	WorkType         string
-	Status           string
-	CheckIn          *time.Time
-	CheckOut         *time.Time
-	CheckInLat       *float64
-	CheckInLon       *float64
-	DistanceMeter    *float64
-	LateMinutes      *int
-	WFAReason        *string
-	EarlyLeaveReason *string
-	IsAutoCheckout   bool
+	ID               int        `json:"id"`
+	EmployeeID       int        `json:"employee_id"`
+	BranchID         int        `json:"branch_id"`
+	Date             string     `json:"date"`
+	WorkType         string     `json:"work_type"`
+	Status           string     `json:"status"`
+	CheckIn          *time.Time `json:"check_in"`
+	CheckOut         *time.Time `json:"check_out"`
+	CheckInLat       *float64   `json:"check_in_lat"`
+	CheckInLon       *float64   `json:"check_in_lon"`
+	DistanceMeter    *float64   `json:"distance_meter"`
+	LateMinutes      *int       `json:"late_minutes"`
+	WFAReason        *string    `json:"wfa_reason"`
+	EarlyLeaveReason *string    `json:"early_leave_reason"`
+	IsAutoCheckout   bool       `json:"is_auto_checkout"`
 }
 
 // ─────────────────────────────────────────
@@ -195,5 +196,9 @@ func (r *Repository) GetAttendanceHistory(employeeID, limit, offset int) ([]*Att
 		}
 		records = append(records, &a)
 	}
+
+	fmt.Println("TOTAL RECORD:", len(records))
+	fmt.Printf("%+v\n", records)
+
 	return records, total, nil
 }

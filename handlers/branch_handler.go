@@ -47,7 +47,7 @@ func (h *BranchHandler) UpdateBranch(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "NAME_REQUIRED", "Nama cabang wajib diisi")
 	}
 	if req.RadiusMeter <= 0 {
-		req.RadiusMeter = 100
+		req.RadiusMeter = 200
 	}
 	if err := h.branchRepo.Update(*claims.BranchID, &req); err != nil {
 		return utils.InternalError(c, "Gagal update data cabang")

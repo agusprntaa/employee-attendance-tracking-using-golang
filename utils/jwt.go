@@ -10,10 +10,11 @@ import (
 var SECRET = []byte(os.Getenv("JWT_SECRET"))
 
 // / GenerateAccessToken — include branchID supaya GET /qr/today tidak perlu query DB
-func GenerateAccessToken(userID int, role string, branchID int) (string, error) {
+func GenerateAccessToken(userID int, role string, tipe string, branchID int) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id":   userID,
 		"role":      role,
+		"tipe":      tipe,
 		"branch_id": branchID,
 		"exp":       time.Now().Add(15 * time.Minute).Unix(),
 	}

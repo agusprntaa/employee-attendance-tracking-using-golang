@@ -1,6 +1,7 @@
 package attendance
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -44,8 +45,13 @@ func errorMessage(err error) (int, string, string) {
 func (h *Handler) CheckIn(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
+	log.Println("RAW BODY:", string(c.Body()))
+
 	var req CheckInRequest
 	if err := c.BodyParser(&req); err != nil {
+
+		log.Println("BODY PARSER ERROR:", err)
+
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"code":    "INVALID_REQUEST",
@@ -53,8 +59,15 @@ func (h *Handler) CheckIn(c *fiber.Ctx) error {
 		})
 	}
 
+	// DEBUG REQUEST RESULT
+	log.Println("=== CHECKIN REQUEST ===")
+	log.Printf("%+v\n", req)
+
 	record, err := h.Service.CheckIn(employeeID, req)
 	if err != nil {
+
+		log.Println("CHECKIN ERROR:", err)
+
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
 			"status":  "error",

@@ -14,6 +14,7 @@ import (
 type Claims struct {
 	UserID   int    `json:"user_id"`
 	Role     string `json:"role"`
+	Tipe     string `json:"tipe"`
 	BranchID *int   `json:"branch_id"`
 }
 
@@ -89,10 +90,12 @@ func AuthMiddleware(c *fiber.Ctx) error {
 
 	userID := int(userIDFloat)
 	role, _ := jwtClaims["role"].(string)
+	tipe, _ := jwtClaims["tipe"].(string)
 
 	// ── Format BE1 ────────────────────────────────────────
 	c.Locals("user_id", userID)
 	c.Locals("role", role)
+	c.Locals("tipe", tipe)
 
 	var branchIDPtr *int
 	if branchIDFloat, ok := jwtClaims["branch_id"].(float64); ok {
@@ -106,6 +109,7 @@ func AuthMiddleware(c *fiber.Ctx) error {
 	c.Locals("claims", &Claims{
 		UserID:   userID,
 		Role:     role,
+		Tipe:     tipe,
 		BranchID: branchIDPtr,
 	})
 
@@ -186,4 +190,30 @@ func GetRole(c *fiber.Ctx) string {
 func GetBranchID(c *fiber.Ctx) int {
 	id, _ := c.Locals("branch_id").(int)
 	return id
+}
+
+func RequirePusatRole(c *fiber.Ctx) error {
+
+	role, _ := c.Locals("role").(string)
+	tipe, _ := c.Locals("tipe").(string)
+
+	// hanya untuk user tipe pusat
+	if tipe != "pusat" {
+		return c.Status(403).JSON(fiber.Map{
+			"status":  "error",
+			"code":    "FORBIDDEN",
+			"message": "Fitur ini hanya untuk admin pusat",
+		})
+	}
+
+	// role harus admin atau super_admin
+	if role != "admin" && role != "super_admin" {
+		return c.Status(403).JSON(fiber.Map{
+			"status":  "error",
+			"code":    "FORBIDDEN",
+			"message": "Role tidak memiliki akses",
+		})
+	}
+
+	return c.Next()
 }

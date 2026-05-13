@@ -75,3 +75,21 @@ type HistoryResponse struct {
 	Limit      int                   `json:"limit"`
 	TotalPages int                   `json:"total_pages"`
 }
+
+type BranchAttendance struct {
+	BranchID       int     `json:"branch_id"`
+	BranchName     string  `json:"branch_name"`
+	TotalEmployees int     `json:"total_employees"`
+	PresentToday   int     `json:"present_today"`
+	Absent         int     `json:"absent"`
+	AttendanceRate float64 `json:"attendance_rate"`
+	Status         string  `json:"status"`
+}
+
+type TodayAttendanceResponse struct {
+	TotalPresent   int                `json:"total_present"`
+	TotalAbsent    int                `json:"total_absent"`
+	TotalEmployees int                `json:"total_employees"`
+	AttendanceRate float64            `json:"attendance_rate"`
+	Branches       []BranchAttendance `json:"branches"`
+}

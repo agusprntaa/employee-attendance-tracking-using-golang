@@ -7,7 +7,7 @@ import "time"
 type Employee struct {
 	ID         int       `json:"id"`
 	Username   string    `json:"username"`
-	Name       string    `json:"name"` // tambah Name
+	Name       string    `json:"full_name"` // tambah Name
 	Role       string    `json:"role"`
 	Tipe       string    `json:"tipe"`
 	DivisionID *int      `json:"division_id,omitempty"`
@@ -19,10 +19,10 @@ type Employee struct {
 type EmployeeDetail struct {
 	ID           int       `json:"id"`
 	Username     string    `json:"username"`
-	Name         string    `json:"name"` // tambah Name
+	Name         string    `json:"full_name"` // tambah Name
 	Role         string    `json:"role"`
 	Tipe         string    `json:"tipe"`
-	Status       string    `json:"status,omitempty"`
+	Status       string    `json:"status"`
 	DivisionID   *int      `json:"division_id,omitempty"`
 	DivisionName string    `json:"division_name,omitempty"`
 	BranchID     *int      `json:"branch_id,omitempty"`
@@ -33,17 +33,20 @@ type EmployeeDetail struct {
 type CreateEmployeeRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
-	Name       string `json:"FullName"` // tambah Name — field ini yang muncul di form FE
+	Name       string `json:"full_name"`
 	Role       string `json:"role"`
 	Tipe       string `json:"tipe"`
 	DivisionID *int   `json:"division_id"`
 }
 
 type UpdateEmployeeRequest struct {
-	Name       string `json:"name"` // tambah Name
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Name       string `json:"full_name"`
 	Role       string `json:"role"`
-	Status     string `json:"status"`
+	Tipe       string `json:"tipe"`
 	DivisionID *int   `json:"division_id"`
+	Status     string `json:"status"`
 }
 
 // ─── BRANCH ──────────────────────────────────────────────────────────────────

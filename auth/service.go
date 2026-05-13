@@ -33,7 +33,7 @@ func (s *Service) Login(username, password string) (string, string, *User, error
 	}
 
 	// generate tokens
-	access, err := utils.GenerateAccessToken(user.ID, user.Role, user.BranchID)
+	access, err := utils.GenerateAccessToken(user.ID, user.Role, user.EmployeeType, user.BranchID)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -50,13 +50,18 @@ func (s *Service) Login(username, password string) (string, string, *User, error
 }
 
 func (s *Service) Refresh(oldToken string) (string, error) {
-	// Sekarang ValidateRefreshToken return 4 nilai — userID, role, branchID, error
-	userID, role, branchID, err := s.Repo.ValidateRefreshToken(oldToken)
+
+	userID, role, tipe, branchID, err := s.Repo.ValidateRefreshToken(oldToken)
 	if err != nil {
 		return "", errors.New("invalid refresh token")
 	}
-	// Generate token baru dengan role + branchID yang benar dari DB
-	newAccess, err := utils.GenerateAccessToken(userID, role, branchID)
+
+	newAccess, err := utils.GenerateAccessToken(
+		userID,
+		role,
+		tipe,
+		branchID,
+	)
 	if err != nil {
 		return "", err
 	}

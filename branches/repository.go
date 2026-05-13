@@ -22,7 +22,7 @@ func (r *Repository) GetAll() ([]*BranchResponse, error) {
 	for rows.Next() {
 		var b BranchResponse
 		if err := rows.Scan(
-			&b.ID, &b.Name, &b.Address,
+			&b.ID, &b.BranchName, &b.Address,
 			&b.Latitude, &b.Longitude, &b.RadiusMeter,
 		); err != nil {
 			return nil, err
@@ -39,7 +39,7 @@ func (r *Repository) GetByID(id int) (*BranchResponse, error) {
 		SELECT id, name, address, latitude, longitude, radius_meter
 		FROM branches WHERE id = $1
 	`, id).Scan(
-		&b.ID, &b.Name, &b.Address,
+		&b.ID, &b.BranchName, &b.Address,
 		&b.Latitude, &b.Longitude, &b.RadiusMeter,
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func (r *Repository) Create(req *BranchRequest) error {
 	_, err := r.DB.Exec(`
 		INSERT INTO branches (name, address, latitude, longitude, radius_meter)
 		VALUES ($1, $2, $3, $4, $5)
-	`, req.Name, req.Address, req.Latitude, req.Longitude, req.RadiusMeter)
+	`, req.BranchName, req.Address, req.Latitude, req.Longitude, req.RadiusMeter)
 	return err
 }
 
@@ -63,7 +63,7 @@ func (r *Repository) Update(id int, req *BranchRequest) error {
 		UPDATE branches
 		SET name = $1, address = $2, latitude = $3, longitude = $4, radius_meter = $5
 		WHERE id = $6
-	`, req.Name, req.Address, req.Latitude, req.Longitude, req.RadiusMeter, id)
+	`, req.BranchName, req.Address, req.Latitude, req.Longitude, req.RadiusMeter, id)
 	return err
 }
 

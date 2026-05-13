@@ -43,19 +43,19 @@ func (r *Repository) SaveRefreshToken(userID int, token string, exp time.Time) e
 	return err
 }
 
-// ValidateRefreshToken — return 4 nilai: userID, role, branchID, error
-func (r *Repository) ValidateRefreshToken(token string) (int, string, int, error) {
+// ValidateRefreshToken — return 4 nilai: userID, role, tipe, branchID, error
+func (r *Repository) ValidateRefreshToken(token string) (int, string, string, int, error) {
 	var userID, branchID int
-	var role string
+	var role, tipe string
 
 	err := r.DB.QueryRow(`
-		SELECT rt.employee_id, e.role, COALESCE(e.branch_id, 0)
+		SELECT rt.employee_id, e.role, e.tipe, COALESCE(e.branch_id, 0)
 		FROM refresh_tokens rt
 		JOIN employees e ON e.id = rt.employee_id
 		WHERE rt.token = $1 AND rt.expires_at > NOW()
-	`, token).Scan(&userID, &role, &branchID)
+	`, token).Scan(&userID, &role, &tipe, &branchID)
 
-	return userID, role, branchID, err
+	return userID, role, tipe, branchID, err
 }
 
 func (r *Repository) DeleteRefreshToken(token string) {

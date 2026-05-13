@@ -38,7 +38,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"status": "error", "message": "Format request tidak valid"})
 	}
-	if req.Name == "" {
+	if req.BranchName == "" {
 		return c.Status(400).JSON(fiber.Map{"status": "error", "message": "Nama cabang wajib diisi"})
 	}
 	if req.RadiusMeter == 0 {

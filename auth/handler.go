@@ -73,9 +73,12 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 	}
 
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		return c.Status(400).JSON(fiber.Map{
+			"error": "invalid request",
+		})
 	}
 
+	// panggil service logout
 	h.Service.Logout(body.RefreshToken)
 
 	return c.JSON(fiber.Map{

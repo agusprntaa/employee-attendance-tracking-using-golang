@@ -5,14 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"time"
 )
 
-// GenerateQRToken membuat token HMAC untuk QR code harian
-// Format payload: "branchID|tanggal" contoh: "1|2026-04-27"
+// GenerateQRToken — generate HMAC token
+// Format payload: "branchID|tanggal|slotWaktu"
+// contoh: "1|2026-05-12|4"
+//
+// PENTING: pakai time.Now() bukan time.Now().UTC()
+// supaya konsisten dengan BE2 yang juga pakai time.Now()
 func GenerateQRToken(branchID int, date string, slotWaktu int) string {
-	// Format payload sama persis dengan BE 2
 	payload := fmt.Sprintf("%d|%s|%d", branchID, date, slotWaktu)
 	secret := []byte(os.Getenv("HMAC_SECRET"))
 
@@ -22,36 +26,37 @@ func GenerateQRToken(branchID int, date string, slotWaktu int) string {
 	return base64.URLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// ValidateQRToken memvalidasi token QR yang dikirim karyawan saat check-in
-// Kenapa cek 2 slot?
-// Kasus: token generate di menit ke-8 (slot 2)
-// Di menit ke-9, slot berganti jadi 3
-// Kalau karyawan scan tepat di menit ke-9, token lama (slot 2) masih diterima
-// supaya tidak gagal hanya karena beda beberapa detik
+// ValidateQRToken — validasi token dengan toleransi 1 slot sebelumnya
 //
-// Alur:
-// 1. Hitung slotNow = menit sekarang / 3
-// 2. Hitung slotPrev = (menit sekarang - 1) / 3  ← slot sebelumnya
-// 3. Generate tokenNow dari slotNow
-// 4. Generate tokenPrev dari slotPrev
-// 5. Cocokkan token yang dikirim dengan tokenNow ATAU tokenPrev
+// Kenapa cek 2 slot?
+// Token dibuat di menit ke-8 (slot 2), berganti di menit ke-9 (slot 3)
+// Kalau karyawan scan tepat di menit ke-9, token slot 2 masih diterima
 func ValidateQRToken(token string, branchID int, date string) bool {
+	// Pakai local time — sama dengan BE2
 	now := time.Now()
 
-	// Slot Sekarang
 	slotNow := now.Minute() / 3
-
-	// Slot sebelumnya — untuk toleransi di detik-detik pergantian slot
-	// Contoh: menit=9, slotNow=3, slotPrev=(9-1)/3=2
-	// Kalau menit=0, (0-1)=-1, dibagi 3 = -1 → Go hasilkan nilai negatif
-	// Tapi ini tidak masalah karena token negatif tidak akan cocok
 	slotPrev := (now.Minute() - 1) / 3
 
-	// Generate token untuk kedua slot
 	tokenNow := GenerateQRToken(branchID, date, slotNow)
 	tokenPrev := GenerateQRToken(branchID, date, slotPrev)
 
-	// pakai hmac.Equal untuk mencegah timing attack
+	// Debug log — hapus setelah confirmed working
+	secret := os.Getenv("HMAC_SECRET")
+	log.Printf("=== QR VALIDATE DEBUG ===")
+	log.Printf("Local time    : %s", now.Format("2006-01-02 15:04:05"))
+	log.Printf("Menit         : %d → slot now=%d, slot prev=%d", now.Minute(), slotNow, slotPrev)
+	log.Printf("Branch ID     : %d", branchID)
+	log.Printf("Date          : %s", date)
+	log.Printf("HMAC_SECRET   : len=%d, kosong=%v", len(secret), secret == "")
+	log.Printf("Payload now   : %d|%s|%d", branchID, date, slotNow)
+	log.Printf("Token diterima: %s", token)
+	log.Printf("Token(now)    : %s", tokenNow)
+	log.Printf("Token(prev)   : %s", tokenPrev)
+	log.Printf("Match now     : %v", hmac.Equal([]byte(token), []byte(tokenNow)))
+	log.Printf("Match prev    : %v", hmac.Equal([]byte(token), []byte(tokenPrev)))
+	log.Printf("=========================")
+
 	return hmac.Equal([]byte(token), []byte(tokenNow)) ||
 		hmac.Equal([]byte(token), []byte(tokenPrev))
 }

@@ -5,6 +5,7 @@ import (
 	"absensi_karyawan/utils"
 	"database/sql"
 	"fmt"
+	"log"
 )
 
 type EmployeeRepo struct {
@@ -15,8 +16,6 @@ func NewEmployeeRepo(db *sql.DB) *EmployeeRepo {
 	return &EmployeeRepo{db: db}
 }
 
-// ListByBranch — list karyawan per cabang dengan search + pagination
-// Fix: tambah kolom name di SELECT
 func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status string) ([]models.EmployeeDetail, int, error) {
 	offset := utils.Offset(page, limit)
 
@@ -25,20 +24,17 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 	argIdx := 2
 
 	if search != "" {
-		// Search by username ATAU name
 		where += fmt.Sprintf(" AND (e.username ILIKE $%d OR e.name ILIKE $%d)", argIdx, argIdx+1)
 		args = append(args, "%"+search+"%", "%"+search+"%")
 		argIdx += 2
 	}
 
-	// Count total
 	var total int
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM employees e %s`, where)
 	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// Fix: tambah e.name di SELECT dan di Scan
 	query := fmt.Sprintf(`
 		SELECT 
 			e.id,
@@ -46,6 +42,7 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 			COALESCE(e.name, '') AS name,
 			e.role,
 			e.tipe,
+			COALESCE(e.status, 'active') AS status,
 			e.division_id,
 			COALESCE(d.name, '') AS division_name,
 			e.branch_id,
@@ -72,9 +69,10 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 		err := rows.Scan(
 			&emp.ID,
 			&emp.Username,
-			&emp.Name, // tambah name
+			&emp.Name,
 			&emp.Role,
 			&emp.Tipe,
+			&emp.Status,
 			&emp.DivisionID,
 			&emp.DivisionName,
 			&emp.BranchID,
@@ -84,8 +82,6 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 		if err != nil {
 			return nil, 0, err
 		}
-		// Set status aktif secara default (kolom status tidak ada di DB)
-		emp.Status = "Active"
 		employees = append(employees, emp)
 	}
 	return employees, total, nil
@@ -99,6 +95,7 @@ func (r *EmployeeRepo) GetByID(id, branchID int) (*models.EmployeeDetail, error)
 			COALESCE(e.name, '') AS name,
 			e.role,
 			e.tipe,
+			COALESCE(e.status, 'active') AS status,
 			e.division_id,
 			COALESCE(d.name, '') AS division_name,
 			e.branch_id,
@@ -116,6 +113,7 @@ func (r *EmployeeRepo) GetByID(id, branchID int) (*models.EmployeeDetail, error)
 		&emp.Name,
 		&emp.Role,
 		&emp.Tipe,
+		&emp.Status,
 		&emp.DivisionID,
 		&emp.DivisionName,
 		&emp.BranchID,
@@ -128,7 +126,6 @@ func (r *EmployeeRepo) GetByID(id, branchID int) (*models.EmployeeDetail, error)
 	if err != nil {
 		return nil, err
 	}
-	emp.Status = "Active"
 	return &emp, nil
 }
 
@@ -138,42 +135,129 @@ func (r *EmployeeRepo) UsernameExists(username string) (bool, error) {
 	return count > 0, err
 }
 
-// Create — INSERT dengan kolom name
-// Fix: tambah name di INSERT, pakai bcrypt bukan SHA256
 func (r *EmployeeRepo) Create(req *models.CreateEmployeeRequest, hashedPassword string, branchID int) (int, error) {
 	var id int
 	err := r.db.QueryRow(`
-		INSERT INTO employees (username, password, name, role, tipe, division_id, branch_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO employees (username, password, name, role, tipe, status, division_id, branch_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`,
 		req.Username,
 		hashedPassword,
-		req.Name, // tambah name
+		req.Name,
 		req.Role,
 		req.Tipe,
+		"active",
 		req.DivisionID,
 		branchID,
 	).Scan(&id)
 	return id, err
 }
 
+// Update — fix: tambah name di SET
+// Sebelum: hanya update role dan division_id
+// Sesudah: update name, role, division_id
 func (r *EmployeeRepo) Update(id, branchID int, req *models.UpdateEmployeeRequest) error {
-	_, err := r.db.Exec(`
+
+	result, err := r.db.Exec(`
 		UPDATE employees 
-		SET role = $1, division_id = $2
-		WHERE id = $3 AND branch_id = $4
-	`, req.Role, req.DivisionID, id, branchID)
-	return err
+		SET 
+			username = $1,
+			name = $2,
+			role = $3,
+			tipe = $4,
+			division_id = $5,
+			status = $6
+		WHERE id = $7 AND branch_id = $8
+	`,
+		req.Username,
+		req.Name,
+		req.Role,
+		req.Tipe,
+		req.DivisionID,
+		req.Status,
+		id,
+		branchID,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("karyawan tidak ditemukan")
+	}
+
+	return nil
 }
 
 func (r *EmployeeRepo) Delete(id, branchID int) error {
-	_, err := r.db.Exec(`
+	result, err := r.db.Exec(`
 		DELETE FROM employees WHERE id = $1 AND branch_id = $2
 	`, id, branchID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("karyawan tidak ditemukan di cabang ini")
+	}
+
+	return nil
+}
+
+func (r *EmployeeRepo) Activate(id, branchID int) error {
+	result, err := r.db.Exec(`
+		UPDATE employees
+		SET status = 'active'
+		WHERE id = $1 AND branch_id = $2
+	`, id, branchID)
+
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("karyawan tidak ditemukan")
+	}
+
+	return nil
 }
 
 func (r *EmployeeRepo) Deactivate(id, branchID int) error {
-	return r.Delete(id, branchID)
+	result, err := r.db.Exec(`
+		UPDATE employees
+		SET status = 'inactive'
+		WHERE id = $1 AND branch_id = $2
+	`, id, branchID)
+
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("DEACTIVATE -> ID=%d BRANCH=%d ROWS=%d", id, branchID, rows)
+
+	if rows == 0 {
+		return fmt.Errorf("karyawan tidak ditemukan")
+	}
+
+	return nil
 }

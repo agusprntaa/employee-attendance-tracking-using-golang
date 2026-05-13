@@ -46,6 +46,10 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 		}})
 	})
 
+	app.Get("/tes-route", func(c *fiber.Ctx) error {
+		return c.SendString("ROUTE AKTIF")
+	})
+
 	// ─── Protected Routes (wajib token + role admin) ───────────────────────────
 	admin := app.Group("/admin-cabang", auth.AuthMiddleware, auth.RequireAdmin)
 
@@ -62,6 +66,8 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	admin.Get("/employees/:id", employeeH.GetByID)
 	admin.Patch("/employees/:id", employeeH.Update)
 	admin.Delete("/employees/:id", employeeH.Delete)
+	admin.Patch("/employees/:id/activate", employeeH.Activate)
+	admin.Patch("/employees/:id/deactivate", employeeH.Deactivate)
 
 	// Attendance
 	admin.Get("/attendance/today", attendanceH.TodayAttendance)

@@ -23,10 +23,12 @@ type CreateEmployeeRequest struct {
 
 type UpdateEmployeeRequest struct {
 	Name       string `json:"name"`
+	Username   string `json:"username"`
 	Role       string `json:"role"`
 	Tipe       string `json:"tipe"`
 	BranchID   int    `json:"branch_id"`
 	DivisionID int    `json:"division_id"`
+	Status     string `json:"status"`
 }
 
 // (Optional - future)

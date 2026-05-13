@@ -2,25 +2,20 @@ package utils
 
 import "time"
 
-// ServerTime return waktu server sekarang dalam UTC
-// SELALU pakai fungsi ini, jangan pakai time.Now() langsung di handler
-// Kenapa? Supaya waktu konsisten dari server, tidak bisa dimanipulasi client
-//
-// Contoh penggunaan:
-//   now := utils.ServerTime()
-//   → simpan ke DB sebagai UTC
-//   → FE konversi ke WIB (UTC+7) untuk tampilan
+// ServerTime — waktu server sekarang
+// PENTING: pakai Local() bukan UTC() supaya konsisten dengan BE2
+// BE2 pakai time.Now() tanpa UTC — kita ikuti supaya slot waktu sama
 func ServerTime() time.Time {
-	return time.Now().UTC()
+	return time.Now()
 }
 
-// TodayDate return tanggal hari ini format "2006-01-02"
-// Dipakai untuk query attendance WHERE date = TodayDate()
+// TodayDate — tanggal hari ini format "2006-01-02"
+// Harus konsisten dengan BE2 yang pakai time.Now().Format(...)
+// Kalau BE2 pakai local time, kita juga harus local time
 func TodayDate() string {
-	return time.Now().UTC().Format("2006-01-02")
+	return time.Now().Format("2006-01-02")
 }
 
-// FormatDate format time.Time ke string "2006-01-02"
 func FormatDate(t time.Time) string {
-	return t.UTC().Format("2006-01-02")
+	return t.Format("2006-01-02")
 }

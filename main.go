@@ -12,6 +12,7 @@ import (
 	"absensi_karyawan/auth"
 	"absensi_karyawan/config"
 	"absensi_karyawan/database"
+	"absensi_karyawan/router"
 
 	// BE1
 	"absensi_karyawan/attendance"
@@ -256,6 +257,16 @@ func main() {
 		employeeH2.Delete,
 	)
 
+	admin.Patch(
+		"/employees/:id/activate",
+		employeeH2.Activate,
+	)
+
+	admin.Patch(
+		"/employees/:id/deactivate",
+		employeeH2.Deactivate,
+	)
+
 	// Attendance Monitoring
 	admin.Get(
 		"/attendance/today",
@@ -366,6 +377,8 @@ func main() {
 	// OPTIONAL:
 	// superAdmin.Get("/branches", branchH.ListBranches)
 	// superAdmin.Post("/branches", branchH.CreateBranch)
+
+	router.SetupGlobalAdminRoutes(app, db)
 
 	// =====================================================
 	// RUN SERVER
