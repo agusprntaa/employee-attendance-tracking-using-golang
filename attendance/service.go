@@ -2,6 +2,7 @@ package attendance
 
 import (
 	"absensi_karyawan/utils"
+	"database/sql"
 	"errors"
 	"log"
 	"strconv"
@@ -13,27 +14,106 @@ type Service struct {
 	Repo *Repository
 }
 
-// ─────────────────────────────────────────
-// Error codes — dikirim ke frontend
-// Frontend bisa cek err.Error() untuk handle tiap kasus
-// ─────────────────────────────────────────
 var (
-	ErrAlreadyCheckedIn  = errors.New("ALREADY_CHECKED_IN")
-	ErrAlreadyCheckedOut = errors.New("ALREADY_CHECKED_OUT")
-	ErrCutoffExceeded    = errors.New("CUTOFF_EXCEEDED")
-	ErrGPSAccuracyLow    = errors.New("GPS_ACCURACY_LOW")
-	ErrQRInvalid         = errors.New("QR_INVALID")
-	ErrBranchMismatch    = errors.New("BRANCH_MISMATCH")
-	ErrOutOfRadius       = errors.New("OUT_OF_RADIUS")
-	ErrWFAReasonTooShort = errors.New("WFA_REASON_TOO_SHORT")
-	ErrNotCheckedIn      = errors.New("NOT_CHECKED_IN")
-	ErrEarlyLeaveReason  = errors.New("EARLY_LEAVE_REASON_REQUIRED")
+	ErrAlreadyCheckedIn       = errors.New("ALREADY_CHECKED_IN")
+	ErrAlreadyCheckedOut      = errors.New("ALREADY_CHECKED_OUT")
+	ErrCutoffExceeded         = errors.New("CUTOFF_EXCEEDED")
+	ErrGPSAccuracyLow         = errors.New("GPS_ACCURACY_LOW")
+	ErrQRInvalid              = errors.New("QR_INVALID")
+	ErrBranchMismatch         = errors.New("BRANCH_MISMATCH")
+	ErrOutOfRadius            = errors.New("OUT_OF_RADIUS")
+	ErrWFAReasonTooShort      = errors.New("WFA_REASON_TOO_SHORT")
+	ErrNotCheckedIn           = errors.New("NOT_CHECKED_IN")
+	ErrEarlyLeaveReason       = errors.New("EARLY_LEAVE_REASON_REQUIRED")
+	ErrNotWorkDay             = errors.New("NOT_WORK_DAY")
+	ErrEmployeeDataIncomplete = errors.New("EMPLOYEE_DATA_INCOMPLETE")
 )
 
 // ─────────────────────────────────────────
-// CheckIn — entry point utama
-// Otomatis routing ke WFO atau WFA
+// Helper functions (inline — tidak perlu helper.go)
 // ─────────────────────────────────────────
+
+// parseWorkStart parse string "HH:MM:SS" atau "HH:MM" menjadi time.Time
+// pada hari yang sama dengan base, dalam timezone yang sama dengan base.
+// Dipakai HANYA untuk menentukan status ON_TIME / LATE dan validasi cutoff.
+func parseWorkStart(base time.Time, hhmm string) (time.Time, error) {
+	// Coba format dengan detik dulu (output PostgreSQL ::text = "08:00:00")
+	t, err := time.Parse("15:04:05", hhmm)
+	if err != nil {
+		// Fallback ke format tanpa detik
+		t, err = time.Parse("15:04", hhmm)
+		if err != nil {
+			return time.Time{}, err
+		}
+	}
+	return time.Date(
+		base.Year(), base.Month(), base.Day(),
+		t.Hour(), t.Minute(), 0, 0,
+		base.Location(),
+	), nil
+}
+
+// minutesDuration konversi menit (int) ke time.Duration
+func minutesDuration(min int) time.Duration {
+	return time.Duration(min) * time.Minute
+}
+
+// isWorkDay cek apakah hari ini termasuk hari kerja berdasarkan work_days divisi.
+// work_days disimpan sebagai "1,2,3,4,5" di mana 1=Senin, 7=Minggu (ISO 8601).
+func isWorkDay(workDays string) bool {
+	today := utils.NowWITA()
+	dayNum := int(today.Weekday()) // Go: 0=Sunday
+	if dayNum == 0 {
+		dayNum = 7 // normalisasi: Minggu = 7
+	}
+	todayStr := strconv.Itoa(dayNum)
+	for _, d := range strings.Split(workDays, ",") {
+		if strings.TrimSpace(d) == todayStr {
+			return true
+		}
+	}
+	return false
+}
+
+// recordToResponse konversi AttendanceRecord ke AttendanceResponse untuk frontend.
+// Timestamp dikonversi eksplisit ke WITA karena lib/pq membaca dari DB sebagai UTC.
+func recordToResponse(a *AttendanceRecord) *AttendanceResponse {
+	resp := &AttendanceResponse{
+		ID:             a.ID,
+		Date:           a.Date,
+		WorkType:       a.WorkType,
+		Status:         a.Status,
+		IsAutoCheckout: a.IsAutoCheckout,
+	}
+	// TIMESTAMP WITHOUT TIME ZONE: lib/pq simpan dan baca nilai UTC mentah.
+	// Konversi ke WITA di sini agar frontend terima waktu lokal yang benar.
+	if a.CheckIn != nil {
+		t := a.CheckIn.In(utils.WITA)
+		resp.CheckIn = &t
+	}
+	if a.CheckOut != nil {
+		t := a.CheckOut.In(utils.WITA)
+		resp.CheckOut = &t
+	}
+	if a.LateMinutes != nil {
+		resp.LateMinutes = *a.LateMinutes
+	}
+	if a.WFAReason != nil {
+		resp.WFAReason = *a.WFAReason
+	}
+	if a.EarlyLeaveReason != nil {
+		resp.EarlyLeaveReason = a.EarlyLeaveReason
+	}
+	if a.DistanceMeter != nil {
+		resp.DistanceMeter = *a.DistanceMeter
+	}
+	return resp
+}
+
+// ─────────────────────────────────────────
+// CheckIn — entry point
+// ─────────────────────────────────────────
+
 func (s *Service) CheckIn(employeeID int, req CheckInRequest) (*AttendanceRecord, error) {
 	if req.WorkType == "WFA" {
 		return s.checkInWFA(employeeID, req)
@@ -41,10 +121,13 @@ func (s *Service) CheckIn(employeeID int, req CheckInRequest) (*AttendanceRecord
 	return s.checkInWFO(employeeID, req)
 }
 
-// checkInWFO — 7 langkah validasi berurutan, JANGAN dibalik urutannya
+// ─────────────────────────────────────────
+// checkInWFO
+// ─────────────────────────────────────────
+
 func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRecord, error) {
 
-	// ── Step 1: Cek duplicate check-in ─────────────────────────────
+	// 1. Cek duplikat check-in hari ini
 	exists, err := s.Repo.TodayAttendanceExists(employeeID)
 	if err != nil {
 		return nil, err
@@ -53,83 +136,83 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 		return nil, ErrAlreadyCheckedIn
 	}
 
-	// ── Step 2: Ambil data employee + division + branch ─────────────
+	// 2. Ambil data karyawan + divisi + cabang
 	detail, err := s.Repo.GetEmployeeDetail(employeeID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEmployeeDataIncomplete
+		}
 		return nil, err
 	}
 
-	// ── Step 3: Cek cutoff time ─────────────────────────────────────
-	// Cutoff = work_start + checkin_cutoff_min
-	// Contoh: work_start 08:00, cutoff 120 menit → batas check-in 10:00
-	now := utils.ServerTime()
-	todayWorkStart := timeOfDay(now, detail.WorkStart)
-	cutoffTime := todayWorkStart.Add(minutesDuration(detail.CutoffMin))
-	if now.After(cutoffTime) {
-		return nil, ErrCutoffExceeded
+	now := utils.NowWITA()
+
+	// 3. Validasi hari kerja divisi
+	if !isWorkDay(detail.WorkDays) {
+		return nil, ErrNotWorkDay
 	}
 
-	// ── Step 4: Validasi akurasi GPS ────────────────────────────────
-	// utils.ValidateLocation hitung jarak dari koordinat yg dikirim FE
-	// > 200m = tolak keras
-	// 50-200m = bisa lanjut tapi frontend tampilkan warning
-	locStatus, err := utils.ValidateLocation(
-		req.Lat,
-		req.Lon,
-		detail.BranchLat,
-		detail.BranchLon,
-		detail.RadiusMeter,
-		req.Accuracy,
-	)
+	// 4. Validasi cutoff check-in (work_start + checkin_cutoff_min)
+	//    Jika work_start gagal di-parse, lewati — jangan blokir check-in.
+	workStart, parseErr := parseWorkStart(now, detail.WorkStart)
+	if parseErr == nil {
+		cutoffTime := workStart.Add(minutesDuration(detail.CutoffMin))
+		if now.After(cutoffTime) {
+			log.Println("CHECKIN CUTOFF — now:", now, "cutoff:", cutoffTime)
+			return nil, ErrCutoffExceeded
+		}
+	} else {
+		log.Println("WARN: gagal parse work_start:", detail.WorkStart, "—", parseErr)
+	}
 
+	// 5. Validasi GPS akurasi + radius
+	locStatus, err := utils.ValidateLocation(
+		req.Lat, req.Lon,
+		detail.BranchLat, detail.BranchLon,
+		detail.RadiusMeter, req.Accuracy,
+	)
 	if err != nil {
 		return nil, err
 	}
-
 	if !locStatus.IsValid {
-
 		if req.Accuracy > 200 {
 			return nil, ErrGPSAccuracyLow
 		}
-
 		log.Println("===== LOCATION DEBUG =====")
-
-		log.Println("USER LAT :", req.Lat)
-		log.Println("USER LON :", req.Lon)
-
-		log.Println("BRANCH LAT :", detail.BranchLat)
-		log.Println("BRANCH LON :", detail.BranchLon)
-
-		log.Println("DISTANCE :", locStatus.Distance)
-
-		log.Println("MAX RADIUS :", detail.RadiusMeter)
-
-		log.Println("GPS ACCURACY :", req.Accuracy)
-
+		log.Println("USER LAT    :", req.Lat)
+		log.Println("USER LON    :", req.Lon)
+		log.Println("BRANCH LAT  :", detail.BranchLat)
+		log.Println("BRANCH LON  :", detail.BranchLon)
+		log.Println("DISTANCE    :", locStatus.Distance)
+		log.Println("MAX RADIUS  :", detail.RadiusMeter)
+		log.Println("GPS ACCURACY:", req.Accuracy)
 		return nil, ErrOutOfRadius
 	}
 
-	// ── Step 5: Validasi HMAC QR token ─────────────────────────────
+	// 6. Validasi QR token + branch match
 	today := utils.TodayDate()
 	if !utils.ValidateQRToken(req.QRToken, req.BranchID, today) {
 		return nil, ErrQRInvalid
 	}
-
-	// Pastikan QR yang di-scan adalah milik cabang karyawan sendiri
 	if req.BranchID != detail.BranchID {
 		return nil, ErrBranchMismatch
 	}
 
-	// ── Step 6: Tentukan status PRESENT atau LATE ───────────────────
-	toleranceTime := todayWorkStart.Add(time.Duration(detail.LateTolMin))
-	status := "PRESENT"
+	// 7. Tentukan status: ON_TIME atau LATE
+	//    Jika work_start gagal di-parse, default ON_TIME.
+	status := "ON_TIME"
 	lateMinutes := 0
-	if now.After(toleranceTime) {
-		status = "LATE"
-		lateMinutes = int(now.Sub(todayWorkStart).Minutes())
+	if parseErr == nil {
+		toleranceDeadline := workStart.Add(time.Duration(detail.LateTolMin) * time.Minute)
+		if now.After(toleranceDeadline) {
+			status = "LATE"
+			lateMinutes = int(now.Sub(workStart).Minutes())
+		}
 	}
 
-	// ── INSERT attendance ───────────────────────────────────────────
+	log.Printf("CHECKIN — employee:%d status:%s late:%dm time:%s",
+		employeeID, status, lateMinutes, now.In(utils.WITA).Format("15:04:05"))
+
 	checkInTime := now
 	distance := locStatus.Distance
 	record := &AttendanceRecord{
@@ -149,10 +232,13 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 	return record, nil
 }
 
-// checkInWFA — lebih simpel, tidak perlu QR atau GPS radius
+// ─────────────────────────────────────────
+// checkInWFA
+// ─────────────────────────────────────────
+
 func (s *Service) checkInWFA(employeeID int, req CheckInRequest) (*AttendanceRecord, error) {
 
-	// Step 1: Cek duplicate
+	// 1. Cek duplikat
 	exists, err := s.Repo.TodayAttendanceExists(employeeID)
 	if err != nil {
 		return nil, err
@@ -161,20 +247,28 @@ func (s *Service) checkInWFA(employeeID int, req CheckInRequest) (*AttendanceRec
 		return nil, ErrAlreadyCheckedIn
 	}
 
-	// Step 2: Validasi alasan WFA minimal 20 karakter
+	// 2. Validasi alasan WFA minimal 20 karakter
 	if len(strings.TrimSpace(req.WFAReason)) < 20 {
 		return nil, ErrWFAReasonTooShort
 	}
 
-	// Ambil branch_id karyawan untuk field branch_id di attendance
+	// 3. Ambil data karyawan
 	detail, err := s.Repo.GetEmployeeDetail(employeeID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEmployeeDataIncomplete
+		}
 		return nil, err
 	}
 
-	// Step 3: INSERT (waktu dari server)
-	now := utils.ServerTime()
+	// 4. Validasi hari kerja
+	if !isWorkDay(detail.WorkDays) {
+		return nil, ErrNotWorkDay
+	}
+
+	now := utils.NowWITA()
 	reason := req.WFAReason
+
 	record := &AttendanceRecord{
 		EmployeeID: employeeID,
 		BranchID:   detail.BranchID,
@@ -192,9 +286,19 @@ func (s *Service) checkInWFA(employeeID int, req CheckInRequest) (*AttendanceRec
 // ─────────────────────────────────────────
 // CheckOut
 // ─────────────────────────────────────────
+//
+// Logika berbasis durasi kerja aktual:
+//
+//	worked_duration  = now - check_in
+//	required_duration = RequiredHours (dari work_end - work_start divisi)
+//
+//	Jika worked_duration < required_duration → EARLY_LEAVE, wajib isi alasan
+//	Jika cukup                               → checkout normal
+//
+// Tidak ada perbandingan terhadap fixed work_end.
 func (s *Service) CheckOut(employeeID int, req CheckOutRequest) (*AttendanceRecord, error) {
 
-	// Step 1: Pastikan sudah check-in
+	// 1. Ambil record check-in hari ini
 	record, err := s.Repo.GetTodayAttendance(employeeID)
 	if err != nil {
 		return nil, err
@@ -202,61 +306,75 @@ func (s *Service) CheckOut(employeeID int, req CheckOutRequest) (*AttendanceReco
 	if record == nil {
 		return nil, ErrNotCheckedIn
 	}
-
-	// Step 2: Cek sudah checkout sebelumnya
 	if record.CheckOut != nil {
 		return nil, ErrAlreadyCheckedOut
 	}
 
-	// Step 3: Cek apakah early leave
+	// 2. Ambil aturan divisi
 	detail, err := s.Repo.GetEmployeeDetail(employeeID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEmployeeDataIncomplete
+		}
 		return nil, err
 	}
 
-	// waktu dari server
-	now := utils.ServerTime()
-	todayWorkEnd := timeOfDay(now, detail.WorkEnd)
+	now := utils.NowWITA()
 
-	status := record.Status // tetap PRESENT / LATE / WFA
+	// 3. Hitung durasi kerja aktual vs durasi wajib
+	workedDuration := now.Sub(*record.CheckIn)
+	requiredDuration := time.Duration(float64(time.Hour) * detail.RequiredHours)
+	minCheckoutTime := record.CheckIn.Add(requiredDuration)
+
+	log.Println("===== CHECKOUT DEBUG =====")
+	log.Println("NOW              :", now.In(utils.WITA).Format("15:04:05"))
+	log.Println("CHECK-IN         :", record.CheckIn.In(utils.WITA).Format("15:04:05"))
+	log.Printf("WORKED           : %.0f menit\n", workedDuration.Minutes())
+	log.Printf("REQUIRED         : %.0f menit (%.1f jam)\n", requiredDuration.Minutes(), detail.RequiredHours)
+	log.Println("MIN CHECKOUT     :", minCheckoutTime.In(utils.WITA).Format("15:04:05"))
+	log.Println("IS EARLY LEAVE   :", workedDuration < requiredDuration)
+	log.Println("=========================")
+
+	status := record.Status
 	var earlyReason *string
 
-	if now.Before(todayWorkEnd) {
-		// Pulang lebih awal — wajib ada alasan
-		if strings.TrimSpace(req.EarlyLeaveReason) == "" {
+	// 4. Deteksi early leave
+	if workedDuration < requiredDuration {
+		reason := strings.TrimSpace(req.EarlyLeaveReason)
+		if reason == "" {
 			return nil, ErrEarlyLeaveReason
 		}
 		status = "EARLY_LEAVE"
-		r := req.EarlyLeaveReason
-		earlyReason = &r
+		earlyReason = &reason
 	}
 
-	// Step 4: UPDATE
+	// 5. Simpan ke DB
 	if err := s.Repo.UpdateCheckOut(employeeID, now, status, earlyReason); err != nil {
+		log.Println("UPDATE CHECKOUT ERROR:", err)
 		return nil, err
 	}
 
 	record.CheckOut = &now
 	record.Status = status
 	record.EarlyLeaveReason = earlyReason
+
 	return record, nil
 }
 
 // ─────────────────────────────────────────
-// GetToday — status absensi hari ini
+// GetToday
 // ─────────────────────────────────────────
+
 func (s *Service) GetToday(employeeID int) (*TodayResponse, error) {
 	record, err := s.Repo.GetTodayAttendance(employeeID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &TodayResponse{HasCheckedIn: false, HasCheckedOut: false, Attendance: nil}, nil
+		}
 		return nil, err
 	}
-
 	if record == nil {
-		return &TodayResponse{
-			HasCheckedIn:  false,
-			HasCheckedOut: false,
-			Attendance:    nil,
-		}, nil
+		return &TodayResponse{HasCheckedIn: false, HasCheckedOut: false, Attendance: nil}, nil
 	}
 
 	resp := recordToResponse(record)
@@ -268,8 +386,9 @@ func (s *Service) GetToday(employeeID int) (*TodayResponse, error) {
 }
 
 // ─────────────────────────────────────────
-// GetHistory — riwayat absensi (dengan pagination)
+// GetHistory
 // ─────────────────────────────────────────
+
 func (s *Service) GetHistory(employeeID, page, limit int) (*HistoryResponse, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
@@ -301,49 +420,4 @@ func (s *Service) GetHistory(employeeID, page, limit int) (*HistoryResponse, err
 		Limit:      limit,
 		TotalPages: totalPages,
 	}, nil
-}
-
-// ─────────────────────────────────────────
-// Helper: konversi record DB ke response
-// ─────────────────────────────────────────
-func recordToResponse(a *AttendanceRecord) *AttendanceResponse {
-	resp := &AttendanceResponse{
-		ID:             a.ID,
-		Date:           a.Date,
-		WorkType:       a.WorkType,
-		Status:         a.Status,
-		CheckIn:        a.CheckIn,
-		CheckOut:       a.CheckOut,
-		IsAutoCheckout: a.IsAutoCheckout,
-	}
-	if a.LateMinutes != nil {
-		resp.LateMinutes = *a.LateMinutes
-	}
-	if a.WFAReason != nil {
-		resp.WFAReason = *a.WFAReason
-	}
-	if a.EarlyLeaveReason != nil {
-		resp.EarlyLeaveReason = *a.EarlyLeaveReason
-	}
-	if a.DistanceMeter != nil {
-		resp.DistanceMeter = *a.DistanceMeter
-	}
-	return resp
-}
-
-// isWorkDay cek apakah hari ini adalah hari kerja divisi ini
-// Dipakai oleh cron job
-func isWorkDay(workDays string) bool {
-	today := utils.ServerTime()
-	dayNum := int(today.Weekday())
-	if dayNum == 0 {
-		dayNum = 7
-	}
-	todayStr := strconv.Itoa(dayNum)
-	for _, d := range strings.Split(workDays, ",") {
-		if strings.TrimSpace(d) == todayStr {
-			return true
-		}
-	}
-	return false
 }

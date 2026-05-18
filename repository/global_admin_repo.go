@@ -2,6 +2,7 @@ package repository
 
 import (
 	"absensi_karyawan/attendance"
+	"absensi_karyawan/utils"
 	"database/sql"
 	"fmt"
 	"time"
@@ -21,7 +22,7 @@ func NewGlobalAdminRepository(db *sql.DB) *GlobalAdminRepository {
 // attendance rate, total cabang
 // ─────────────────────────────────────────────────────────────
 func (r *GlobalAdminRepository) GetDashboardStats() (map[string]interface{}, error) {
-	today := time.Now().UTC().Format("2006-01-02")
+	today := utils.NowWITA()
 
 	var totalEmployees, presentToday, totalBranches int
 	var attendanceRate float64
@@ -59,7 +60,7 @@ func (r *GlobalAdminRepository) GetDashboardStats() (map[string]interface{}, err
 // Data bar chart: hadir per cabang hari ini
 // ─────────────────────────────────────────────────────────────
 func (r *GlobalAdminRepository) GetAttendancePerBranch() ([]map[string]interface{}, error) {
-	today := time.Now().UTC().Format("2006-01-02")
+	today := utils.NowWITA()
 
 	rows, err := r.db.Query(`
 		SELECT
@@ -96,7 +97,7 @@ func (r *GlobalAdminRepository) GetAttendancePerBranch() ([]map[string]interface
 // Pie chart: WFO vs WFA hari ini
 // ─────────────────────────────────────────────────────────────
 func (r *GlobalAdminRepository) GetWorkModeDistribution() (map[string]interface{}, error) {
-	today := time.Now().UTC().Format("2006-01-02")
+	today := utils.NowWITA()
 
 	var wfoCount, wfaCount int
 	r.db.QueryRow(`
@@ -126,7 +127,7 @@ func (r *GlobalAdminRepository) GetWorkModeDistribution() (map[string]interface{
 // Tabel performa per cabang hari ini
 // ─────────────────────────────────────────────────────────────
 func (r *GlobalAdminRepository) GetBranchPerformance() ([]map[string]interface{}, error) {
-	today := time.Now().UTC().Format("2006-01-02")
+	today := utils.NowWITA()
 
 	rows, err := r.db.Query(`
 		SELECT
@@ -801,7 +802,7 @@ func (r *GlobalAdminRepository) GetBranchDetail(branchID int) (map[string]interf
 	`, branchID).Scan(&totalEmployees)
 
 	// Statistik attendance hari ini
-	today := time.Now().UTC().Format("2006-01-02")
+	today := utils.NowWITA()
 	var todayPresent, todayAbsent int
 	r.db.QueryRow(`
 		SELECT

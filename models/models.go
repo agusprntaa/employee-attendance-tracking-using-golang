@@ -82,7 +82,7 @@ type Division struct {
 	WorkDays         string `json:"work_days"`
 	WorkStart        string `json:"work_start"`
 	WorkEnd          string `json:"work_end"`
-	LateToleanceMin  int    `json:"late_tolerance_min"`
+	LateToleranceMin int    `json:"late_tolerance_min"`
 	CheckinCutoffMin int    `json:"checkin_cutoff_min"`
 }
 
@@ -91,7 +91,7 @@ type CreateDivisionRequest struct {
 	WorkDays         string `json:"work_days"`
 	WorkStart        string `json:"work_start"`
 	WorkEnd          string `json:"work_end"`
-	LateToleanceMin  int    `json:"late_tolerance_min"`
+	LateToleranceMin int    `json:"late_tolerance_min"`
 	CheckinCutoffMin int    `json:"checkin_cutoff_min"`
 }
 

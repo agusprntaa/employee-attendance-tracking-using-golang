@@ -6,7 +6,6 @@ import (
 	"absensi_karyawan/utils"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -77,7 +76,7 @@ func (h *AttendanceHandler) AttendanceReport(c *fiber.Ctx) error {
 	endDate := c.Query("end_date")
 	yearStr := c.Query("year")
 
-	now := time.Now()
+	now := utils.NowWITA()
 	if startDate == "" {
 		startDate = now.Format("2006-01") + "-01"
 	}

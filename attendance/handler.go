@@ -11,7 +11,7 @@ type Handler struct {
 	Service *Service
 }
 
-// errorMessage mapping error code ke pesan yang ramah untuk user
+// errorMessage mapping error ke HTTP status + kode + pesan user-friendly
 func errorMessage(err error) (int, string, string) {
 	switch err {
 	case ErrAlreadyCheckedIn:
@@ -19,7 +19,7 @@ func errorMessage(err error) (int, string, string) {
 	case ErrAlreadyCheckedOut:
 		return 400, "ALREADY_CHECKED_OUT", "Kamu sudah check-out hari ini"
 	case ErrCutoffExceeded:
-		return 400, "CUTOFF_EXCEEDED", "Waktu check-in sudah melewati batas"
+		return 400, "CUTOFF_EXCEEDED", "Waktu check-in sudah melewati batas maksimal"
 	case ErrGPSAccuracyLow:
 		return 400, "GPS_ACCURACY_LOW", "Akurasi GPS terlalu rendah, coba pindah ke tempat terbuka"
 	case ErrQRInvalid:
@@ -34,24 +34,25 @@ func errorMessage(err error) (int, string, string) {
 		return 400, "NOT_CHECKED_IN", "Kamu belum check-in hari ini"
 	case ErrEarlyLeaveReason:
 		return 400, "EARLY_LEAVE_REASON_REQUIRED", "Alasan pulang cepat wajib diisi"
+	case ErrNotWorkDay:
+		return 400, "NOT_WORK_DAY", "Hari ini bukan hari kerja untuk divisimu"
+	case ErrEmployeeDataIncomplete:
+		return 422, "EMPLOYEE_DATA_INCOMPLETE", "Data karyawan tidak lengkap, hubungi admin untuk mengatur divisi dan cabang"
 	default:
-		return 500, "INTERNAL_ERROR", "Terjadi kesalahan, coba lagi"
+		return 500, "INTERNAL_ERROR", "Terjadi kesalahan server, coba lagi"
 	}
 }
 
 // ─────────────────────────────────────────
 // POST /attendance/checkin
 // ─────────────────────────────────────────
+
 func (h *Handler) CheckIn(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
-	log.Println("RAW BODY:", string(c.Body()))
-
 	var req CheckInRequest
 	if err := c.BodyParser(&req); err != nil {
-
 		log.Println("BODY PARSER ERROR:", err)
-
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"code":    "INVALID_REQUEST",
@@ -59,15 +60,12 @@ func (h *Handler) CheckIn(c *fiber.Ctx) error {
 		})
 	}
 
-	// DEBUG REQUEST RESULT
-	log.Println("=== CHECKIN REQUEST ===")
-	log.Printf("%+v\n", req)
+	log.Println("RAW BODY:", string(c.Body()))
+	log.Printf("REQUEST PARSED: %+v\n", req)
 
 	record, err := h.Service.CheckIn(employeeID, req)
 	if err != nil {
-
 		log.Println("CHECKIN ERROR:", err)
-
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
 			"status":  "error",
@@ -86,12 +84,12 @@ func (h *Handler) CheckIn(c *fiber.Ctx) error {
 // ─────────────────────────────────────────
 // PATCH /attendance/checkout
 // ─────────────────────────────────────────
+
 func (h *Handler) CheckOut(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
 	var req CheckOutRequest
-	// Body boleh kosong jika tidak early leave
-	c.BodyParser(&req)
+	c.BodyParser(&req) // body boleh kosong jika bukan early leave
 
 	record, err := h.Service.CheckOut(employeeID, req)
 	if err != nil {
@@ -112,17 +110,16 @@ func (h *Handler) CheckOut(c *fiber.Ctx) error {
 
 // ─────────────────────────────────────────
 // GET /attendance/today
-// Dipakai dashboard karyawan untuk cek status hari ini
 // ─────────────────────────────────────────
+
 func (h *Handler) GetToday(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
 	result, err := h.Service.GetToday(employeeID)
 	if err != nil {
-
 		return c.Status(500).JSON(fiber.Map{
 			"status":  "error",
-			"message": "Gagal mengambil data absensi",
+			"message": "Gagal mengambil data absensi hari ini",
 		})
 	}
 
@@ -134,8 +131,8 @@ func (h *Handler) GetToday(c *fiber.Ctx) error {
 
 // ─────────────────────────────────────────
 // GET /attendance/history?page=1&limit=10
-// Riwayat absensi karyawan sendiri
 // ─────────────────────────────────────────
+
 func (h *Handler) GetHistory(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 

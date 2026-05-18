@@ -20,19 +20,24 @@ func (h *Handler) GetTodayToken(c *fiber.Ctx) error {
 		})
 	}
 
-	now := time.Now()
-	today := now.UTC().Format("2006-01-02")
+	now := utils.NowWITA()
+
+	today := utils.TodayDate()
+
 	slotWaktu := now.Minute() / 3
 
 	token := utils.GenerateQRToken(branchID, today, slotWaktu)
 
+	// hitung kapan QR expired
+	expiredAt := now.Truncate(3 * time.Minute).Add(3 * time.Minute)
+
 	return c.JSON(fiber.Map{
 		"status": "success",
 		"data": fiber.Map{
-			"token":     token,
-			"branch_id": branchID,
-			"date":      today,
-			"expire":    "Berlaku 3 menit",
+			"token":      token,
+			"branch_id":  branchID,
+			"date":       today,
+			"expired_at": expiredAt.Format(time.RFC3339),
 		},
 	})
 }

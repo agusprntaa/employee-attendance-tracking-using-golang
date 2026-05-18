@@ -45,7 +45,7 @@ type AttendanceResponse struct {
 	LateMinutes      int        `json:"late_minutes"`
 	IsAutoCheckout   bool       `json:"is_auto_checkout"`
 	WFAReason        string     `json:"wfa_reason,omitempty"`
-	EarlyLeaveReason string     `json:"early_leave_reason,omitempty"`
+	EarlyLeaveReason *string    `json:"early_leave_reason,omitempty"` // FIX
 	DistanceMeter    float64    `json:"distance_meter,omitempty"`
 }
 

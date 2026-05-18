@@ -29,7 +29,7 @@ func (r *DivisionRepo) List() ([]models.Division, error) {
 	for rows.Next() {
 		var d models.Division
 		rows.Scan(&d.ID, &d.Name, &d.WorkDays, &d.WorkStart, &d.WorkEnd,
-			&d.LateToleanceMin, &d.CheckinCutoffMin)
+			&d.LateToleranceMin, &d.CheckinCutoffMin)
 		list = append(list, d)
 	}
 	return list, nil
@@ -43,7 +43,7 @@ func (r *DivisionRepo) GetByID(id int) (*models.Division, error) {
 			late_tolerance_min, checkin_cutoff_min
 		FROM divisions WHERE id = $1
 	`, id).Scan(&d.ID, &d.Name, &d.WorkDays, &d.WorkStart, &d.WorkEnd,
-		&d.LateToleanceMin, &d.CheckinCutoffMin)
+		&d.LateToleranceMin, &d.CheckinCutoffMin)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -57,7 +57,7 @@ func (r *DivisionRepo) Create(req *models.CreateDivisionRequest) (int, error) {
 		VALUES ($1, $2, $3::time, $4::time, $5, $6)
 		RETURNING id
 	`, req.Name, req.WorkDays, req.WorkStart, req.WorkEnd,
-		req.LateToleanceMin, req.CheckinCutoffMin).Scan(&id)
+		req.LateToleranceMin, req.CheckinCutoffMin).Scan(&id)
 	return id, err
 }
 
@@ -68,7 +68,7 @@ func (r *DivisionRepo) Update(id int, req *models.CreateDivisionRequest) error {
 			late_tolerance_min=$5, checkin_cutoff_min=$6
 		WHERE id = $7
 	`, req.Name, req.WorkDays, req.WorkStart, req.WorkEnd,
-		req.LateToleanceMin, req.CheckinCutoffMin, id)
+		req.LateToleranceMin, req.CheckinCutoffMin, id)
 	return err
 }
 

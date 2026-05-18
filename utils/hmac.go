@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 )
 
 // GenerateQRToken — generate HMAC token
@@ -23,7 +22,7 @@ func GenerateQRToken(branchID int, date string, slotWaktu int) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 
-	return base64.URLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // ValidateQRToken — validasi token dengan toleransi 1 slot sebelumnya
@@ -33,10 +32,14 @@ func GenerateQRToken(branchID int, date string, slotWaktu int) string {
 // Kalau karyawan scan tepat di menit ke-9, token slot 2 masih diterima
 func ValidateQRToken(token string, branchID int, date string) bool {
 	// Pakai local time — sama dengan BE2
-	now := time.Now()
+	now := NowWITA()
 
 	slotNow := now.Minute() / 3
-	slotPrev := (now.Minute() - 1) / 3
+
+	slotPrev := slotNow - 1
+	if slotPrev < 0 {
+		slotPrev = 19 // 60 menit / 3
+	}
 
 	tokenNow := GenerateQRToken(branchID, date, slotNow)
 	tokenPrev := GenerateQRToken(branchID, date, slotPrev)

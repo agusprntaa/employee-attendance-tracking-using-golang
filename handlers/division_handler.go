@@ -34,7 +34,7 @@ func (h *DivisionHandler) GetSchedules(c *fiber.Ctx) error {
 	endDate := c.Query("end_date")
 
 	if startDate == "" || endDate == "" {
-		now := time.Now()
+		now := utils.NowWITA()
 		weekday := int(now.Weekday())
 		if weekday == 0 {
 			weekday = 7
@@ -110,8 +110,8 @@ func (h *DivisionHandler) Create(c *fiber.Ctx) error {
 	if req.WorkDays == "" {
 		req.WorkDays = "1,2,3,4,5"
 	}
-	if req.LateToleanceMin == 0 {
-		req.LateToleanceMin = 15
+	if req.LateToleranceMin == 0 {
+		req.LateToleranceMin = 15
 	}
 	if req.CheckinCutoffMin == 0 {
 		req.CheckinCutoffMin = 120

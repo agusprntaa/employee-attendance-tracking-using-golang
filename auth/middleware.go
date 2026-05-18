@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"absensi_karyawan/utils"
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -40,7 +40,7 @@ func AuthMiddleware(c *fiber.Ctx) error {
 	}
 
 	token, err := jwt.Parse(parts[1], func(t *jwt.Token) (interface{}, error) {
-		return utils.SECRET, nil
+		return []byte(os.Getenv("JWT_SECRET")), nil
 	})
 	if err != nil {
 

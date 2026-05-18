@@ -2,6 +2,7 @@ package repository
 
 import (
 	"absensi_karyawan/models"
+	"absensi_karyawan/utils"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
@@ -27,13 +28,13 @@ func generateQRToken(branchID int, date string, slotWaktu int) string {
 	secret := []byte(os.Getenv("HMAC_SECRET"))
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
-	return base64.URLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // GetTodayQR - generate token QR untuk slot 3 menit sekarang
 // Selaras dengan Backend 1 yang pakai slotWaktu = menit / 3
 func (r *QRRepo) GetTodayQR(branchID int) (*models.QRData, error) {
-	now := time.Now()
+	now := utils.NowWITA()
 	today := now.Format("2006-01-02")
 	slotWaktu := now.Minute() / 3
 

@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/joho/godotenv"
 
 	// CORE
 	"absensi_karyawan/auth"
@@ -36,6 +37,11 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization, ngrok-skip-browser-warning",
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 	}))
+
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 
 	// =====================================================
 	// DATABASE
@@ -149,8 +155,8 @@ func main() {
 	// =====================================================
 
 	loginLimiter := limiter.New(limiter.Config{
-		Max:        15,
-		Expiration: 15 * time.Minute,
+		Max:        30,
+		Expiration: 30 * time.Minute,
 	})
 
 	// =====================================================
