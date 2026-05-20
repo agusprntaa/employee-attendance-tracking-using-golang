@@ -7,7 +7,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
-	"github.com/joho/godotenv"
 
 	// CORE
 	"absensi_karyawan/auth"
@@ -38,10 +37,10 @@ func main() {
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 	}))
 
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+	app.Use(func(c *fiber.Ctx) error {
+		c.Set("ngrok-skip-browser-warning", "true")
+		return c.Next()
+	})
 
 	// =====================================================
 	// DATABASE
@@ -99,6 +98,11 @@ func main() {
 	employeeHandler := &employee.Handler{
 		Repo: employeeRepo,
 	}
+
+	app.Get(
+		"/employee/profile/photo/view/:filename",
+		employeeHandler.ViewPhoto,
+	)
 
 	// =====================================================
 	// BE2 REPOSITORIES (ADMIN PANEL)
@@ -200,6 +204,11 @@ func main() {
 		employeeHandler.ChangePassword,
 	)
 
+	api.Patch(
+		"/employee/profile",
+		employeeHandler.UpdateProfile,
+	)
+
 	// Attendance
 	api.Post(
 		"/attendance/checkin",
@@ -219,6 +228,16 @@ func main() {
 	api.Get(
 		"/attendance/history",
 		attendanceHandler.GetHistory,
+	)
+
+	api.Post(
+		"/employee/profile/photo",
+		employeeHandler.UploadPhoto,
+	)
+
+	api.Delete(
+		"/employee/profile/photo",
+		employeeHandler.DeletePhoto,
 	)
 
 	// =====================================================

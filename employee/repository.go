@@ -17,6 +17,11 @@ type Repository struct {
 // ─────────────────────────────────────────
 func (r *Repository) GetProfile(employeeID int) (*ProfileResponse, error) {
 	var p ProfileResponse
+	var photoURL sql.NullString
+	var email sql.NullString
+	var phone sql.NullString
+	var address sql.NullString
+	var birthDate sql.NullString
 
 	err := r.DB.QueryRow(`
 		SELECT
@@ -26,7 +31,12 @@ func (r *Repository) GetProfile(employeeID int) (*ProfileResponse, error) {
 			e.role,
 			e.tipe,
 			COALESCE(d.name, '-') AS division_name,
-			COALESCE(b.name, '-') AS branch_name
+			COALESCE(b.name, '-') AS branch_name,
+			e.photo_url,
+			e.email,
+			e.phone,
+			e.address,
+			TO_CHAR(e.birth_date, 'YYYY-MM-DD') AS birth_date
 		FROM employees e
 		LEFT JOIN divisions d ON d.id = e.division_id
 		LEFT JOIN branches b  ON b.id = e.branch_id
@@ -39,18 +49,68 @@ func (r *Repository) GetProfile(employeeID int) (*ProfileResponse, error) {
 		&p.Tipe,
 		&p.DivisionName,
 		&p.BranchName,
+		&photoURL,
+		&email,
+		&phone,
+		&address,
+		&birthDate,
 	)
-
 	if err != nil {
 		return nil, err
 	}
+
+	if photoURL.Valid {
+		p.PhotoURL = photoURL.String
+	}
+	if email.Valid {
+		p.Email = email.String
+	}
+	if phone.Valid {
+		p.Phone = phone.String
+	}
+	if address.Valid {
+		p.Address = address.String
+	}
+	if birthDate.Valid {
+		p.BirthDate = birthDate.String
+	}
+
 	return &p, nil
 }
 
+func (r *Repository) UpdateProfile(employeeID int, req UpdateProfileRequest) error {
+	// Validasi birth_date — kalau kosong simpan NULL, kalau diisi harus format YYYY-MM-DD
+	var birthDateVal interface{}
+	if strings.TrimSpace(req.BirthDate) == "" {
+		birthDateVal = nil
+	} else {
+		birthDateVal = req.BirthDate
+	}
+
+	_, err := r.DB.Exec(`
+		UPDATE employees
+		SET
+			name       = $1,
+			email      = NULLIF($2, ''),
+			phone      = NULLIF($3, ''),
+			address    = NULLIF($4, ''),
+			birth_date = $5
+		WHERE id = $6
+	`,
+		strings.TrimSpace(req.Name),
+		strings.TrimSpace(req.Email),
+		strings.TrimSpace(req.Phone),
+		strings.TrimSpace(req.Address),
+		birthDateVal,
+		employeeID,
+	)
+	return err
+}
+
 // ─────────────────────────────────────────
-// GetPasswordHash
-// Ambil hash password untuk verifikasi saat change password
+// GetPasswordHash — tidak berubah
 // ─────────────────────────────────────────
+
 func (r *Repository) GetPasswordHash(employeeID int) (string, error) {
 	var hash string
 	err := r.DB.QueryRow(`
@@ -67,6 +127,49 @@ func (r *Repository) UpdatePassword(employeeID int, newHash string) error {
 	_, err := r.DB.Exec(`
 		UPDATE employees SET password = $1 WHERE id = $2
 	`, newHash, employeeID)
+	return err
+}
+
+// ─────────────────────────────────────────
+// F5: UpdatePhotoURL — simpan path foto ke DB
+// ─────────────────────────────────────────
+
+func (r *Repository) UpdatePhotoURL(employeeID int, photoURL string) error {
+	_, err := r.DB.Exec(`
+		UPDATE employees SET photo_url = $1 WHERE id = $2
+	`, photoURL, employeeID)
+	return err
+}
+
+// ─────────────────────────────────────────
+// F5: GetPhotoURL — ambil path foto lama
+// Dipakai sebelum upload baru / delete,
+// supaya file lama bisa dihapus dari disk
+// ─────────────────────────────────────────
+
+func (r *Repository) GetPhotoURL(employeeID int) (string, error) {
+	var photoURL sql.NullString
+	err := r.DB.QueryRow(`
+		SELECT photo_url FROM employees WHERE id = $1
+	`, employeeID).Scan(&photoURL)
+	if err != nil {
+		return "", err
+	}
+	if photoURL.Valid {
+		return photoURL.String, nil
+	}
+	return "", nil
+}
+
+// ─────────────────────────────────────────
+// F5: ClearPhotoURL — hapus path foto dari DB
+// Dipanggil saat karyawan hapus foto profil
+// ─────────────────────────────────────────
+
+func (r *Repository) ClearPhotoURL(employeeID int) error {
+	_, err := r.DB.Exec(`
+		UPDATE employees SET photo_url = NULL WHERE id = $1
+	`, employeeID)
 	return err
 }
 

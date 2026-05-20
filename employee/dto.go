@@ -34,8 +34,11 @@ type UpdateEmployeeRequest struct {
 // (Optional - future)
 // Request update profile
 type UpdateProfileRequest struct {
-	Name     string `json:"name"`
-	Username string `json:"username"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	Address   string `json:"address"`
+	BirthDate string `json:"birth_date"`
 }
 
 // ─────────────────────────────────────────
@@ -52,4 +55,9 @@ type ProfileResponse struct {
 	Tipe         string `json:"tipe"`
 	DivisionName string `json:"division_name"`
 	BranchName   string `json:"branch_name"`
+	PhotoURL     string `json:"photo_url"`
+	Email        string `json:"email"`
+	Phone        string `json:"phone"`
+	Address      string `json:"address"`
+	BirthDate    string `json:"birth_date"`
 }
