@@ -18,10 +18,10 @@ type Claims struct {
 	BranchID *int   `json:"branch_id"`
 }
 
-// AuthMiddleware — validasi JWT dan simpan ke context
-// Simpan DUA format:
-// 1. c.Locals("user_id"), c.Locals("role"), c.Locals("branch_id") → untuk BE1
-// 2. c.Locals("claims") sebagai *Claims                            → untuk BE2
+// ============================================================
+// AuthMiddleware
+// ============================================================
+
 func AuthMiddleware(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if authHeader == "" {
@@ -40,19 +40,17 @@ func AuthMiddleware(c *fiber.Ctx) error {
 	}
 
 	token, err := jwt.Parse(parts[1], func(t *jwt.Token) (interface{}, error) {
-		return []byte(os.Getenv("JWT_SECRET")), nil
+		return []byte(os.Getenv("JWT_ACCESS_SECRET")), nil
 	})
-	if err != nil {
 
-		// DEBUG
-		// log.Println("JWT ERROR:", err)
+	if err != nil {
 
 		// TOKEN EXPIRED
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return c.Status(401).JSON(fiber.Map{
 				"status":  "error",
 				"code":    "TOKEN_EXPIRED",
-				"message": "Session habis, silakan login kembali",
+				"message": "Access token expired. Silakan refresh token",
 			})
 		}
 
@@ -91,11 +89,13 @@ func AuthMiddleware(c *fiber.Ctx) error {
 	userID := int(userIDFloat)
 	role, _ := jwtClaims["role"].(string)
 	tipe, _ := jwtClaims["tipe"].(string)
+	mustChangePwd, _ := jwtClaims["must_change_password"].(bool)
 
 	// ── Format BE1 ────────────────────────────────────────
 	c.Locals("user_id", userID)
 	c.Locals("role", role)
 	c.Locals("tipe", tipe)
+	c.Locals("must_change_password", mustChangePwd)
 
 	var branchIDPtr *int
 	if branchIDFloat, ok := jwtClaims["branch_id"].(float64); ok {
@@ -116,7 +116,22 @@ func AuthMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-// GetClaims — dipakai oleh handlers BE2
+func MustChangePassword(c *fiber.Ctx) error {
+	mustChange, _ := c.Locals("must_change_password").(bool)
+	if mustChange {
+		return c.Status(403).JSON(fiber.Map{
+			"status":  "error",
+			"code":    "MUST_CHANGE_PASSWORD",
+			"message": "Anda harus mengganti password sebelum melanjutkan",
+		})
+	}
+	return c.Next()
+}
+
+// ============================================================
+// Helper & Role middleware — tidak berubah
+// ============================================================
+
 func GetClaims(c *fiber.Ctx) *Claims {
 	claims, _ := c.Locals("claims").(*Claims)
 	return claims

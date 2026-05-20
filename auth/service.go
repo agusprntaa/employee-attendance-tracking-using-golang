@@ -3,7 +3,9 @@ package auth
 import (
 	"absensi_karyawan/utils"
 	"errors"
+	"os"
 
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -11,7 +13,7 @@ type Service struct {
 	Repo *Repository
 }
 
-// User struct untuk dikirim ke handler (dan ke frontend)
+// User struct — tidak berubah
 type User struct {
 	ID           int
 	Name         string
@@ -21,47 +23,113 @@ type User struct {
 	BranchID     int
 }
 
-func (s *Service) Login(username, password string) (string, string, *User, error) {
-	user, hashed, err := s.Repo.FindUser(username)
+// ============================================================
+// Login
+//
+// PERUBAHAN:
+//   - Pakai FindUserWithPasswordFlag supaya dapat must_change_password
+//   - GenerateRefreshToken sekarang terima role (untuk expiry beda)
+//   - SaveRefreshToken sekarang terima lebih banyak param
+//   - Return tambah mustChangePassword bool
+// ============================================================
+
+func (s *Service) Login(username, password string) (string, string, *User, bool, error) {
+	// Ambil user + flag must_change_password
+	user, hashed, mustChange, err := s.Repo.FindUserWithPasswordFlag(username)
 	if err != nil {
-		return "", "", nil, errors.New("user not found")
+		return "", "", nil, false, errors.New("user not found")
 	}
 
-	// bandingkan password
+	// Validasi password
 	if bcrypt.CompareHashAndPassword([]byte(hashed), []byte(password)) != nil {
-		return "", "", nil, errors.New("wrong password")
+		return "", "", nil, false, errors.New("wrong password")
 	}
 
-	// generate tokens
-	access, err := utils.GenerateAccessToken(user.ID, user.Role, user.EmployeeType, user.BranchID)
+	// Generate access token (3 menit, semua role sama)
+	// Embed mustChange ke claim supaya middleware bisa cek tanpa query DB
+	access, err := utils.GenerateAccessTokenWithFlags(user.ID, user.Role, user.EmployeeType, user.BranchID, mustChange)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, false, err
 	}
 
-	refresh, exp, err := utils.GenerateRefreshToken(user.ID)
+	// Generate refresh token (expiry berdasarkan role)
+	// karyawan → 15 menit | admin/super_admin → 12 jam
+	refresh, exp, err := utils.GenerateRefreshToken(user.ID, user.Role)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, false, err
 	}
 
-	// simpan refresh token ke DB
-	s.Repo.SaveRefreshToken(user.ID, refresh, exp)
+	// Simpan refresh token (di-hash) ke DB
+	// Pakai UpsertRefreshToken untuk single-session (hapus token lama dulu)
+	// Ganti ke SaveRefreshToken kalau mau multi-device
+	err = s.Repo.UpsertRefreshToken(
+		user.ID,
+		refresh,
+		user.Role,
+		user.EmployeeType,
+		user.BranchID,
+		exp,
+	)
+	if err != nil {
+		return "", "", nil, false, err
+	}
 
-	return access, refresh, user, nil
+	return access, refresh, user, mustChange, nil
 }
 
-func (s *Service) Refresh(oldToken string) (string, error) {
+// ============================================================
+// Refresh
+//
+// PERUBAHAN:
+//   - Decode JWT refresh token dulu → dapat user_id & role
+//   - Gunakan JWT_REFRESH_SECRET (bukan JWT_SECRET lama)
+//   - Validasi token dengan compare hash di DB
+//   - Generate access token baru (refresh token TIDAK diganti)
+// ============================================================
 
-	userID, role, tipe, branchID, err := s.Repo.ValidateRefreshToken(oldToken)
+func (s *Service) Refresh(rawRefreshToken string) (string, error) {
+	// 1. Decode JWT refresh token untuk dapat user_id
+	//    (tanpa verify expiry dulu — kita cek DB sebagai sumber kebenaran)
+	refreshSecret := os.Getenv("JWT_REFRESH_SECRET")
+
+	parsed, err := jwt.Parse(rawRefreshToken, func(t *jwt.Token) (interface{}, error) {
+		return []byte(refreshSecret), nil
+	})
+
 	if err != nil {
-		return "", errors.New("invalid refresh token")
+		// Token expired / invalid signature → sesi habis
+		return "", errors.New("refresh token expired atau tidak valid, silakan login kembali")
 	}
 
-	newAccess, err := utils.GenerateAccessToken(
-		userID,
-		role,
-		tipe,
-		branchID,
-	)
+	if !parsed.Valid {
+		return "", errors.New("refresh token tidak valid")
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", errors.New("token claims tidak valid")
+	}
+
+	// Pastikan ini benar-benar refresh token, bukan access token
+	if tokenType, _ := claims["type"].(string); tokenType != "refresh" {
+		return "", errors.New("token type tidak valid")
+	}
+
+	userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		return "", errors.New("token tidak valid")
+	}
+	userID := int(userIDFloat)
+
+	// 2. Cari token yang cocok di DB (compare hash)
+	role, tipe, branchID, err := s.Repo.ValidateAndGetToken(userID, rawRefreshToken)
+	if err != nil {
+		// Token tidak ada di DB → kemungkinan sudah logout atau dicuri
+		return "", errors.New("sesi tidak ditemukan, silakan login kembali")
+	}
+
+	// 3. Generate access token baru
+	newAccess, err := utils.GenerateAccessToken(userID, role, tipe, branchID)
 	if err != nil {
 		return "", err
 	}
@@ -69,12 +137,51 @@ func (s *Service) Refresh(oldToken string) (string, error) {
 	return newAccess, nil
 }
 
-func (s *Service) Logout(refreshToken string) {
-	s.Repo.DeleteRefreshToken(refreshToken)
+// ============================================================
+// Logout
+//
+// PERUBAHAN:
+//   - Perlu userID sekarang untuk cari token di DB
+//   - Decode JWT refresh token untuk dapat userID tanpa hit DB dulu
+// ============================================================
+
+func (s *Service) Logout(rawRefreshToken string) {
+	if rawRefreshToken == "" {
+		return
+	}
+
+	// Decode tanpa validasi expiry untuk dapat user_id saja
+	refreshSecret := os.Getenv("JWT_REFRESH_SECRET")
+	parsed, err := jwt.Parse(rawRefreshToken, func(t *jwt.Token) (interface{}, error) {
+		return []byte(refreshSecret), nil
+	}, jwt.WithoutClaimsValidation())
+
+	if err != nil || !parsed.Valid {
+		return
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return
+	}
+
+	userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		return
+	}
+
+	s.Repo.DeleteRefreshToken(rawRefreshToken, int(userIDFloat))
 }
 
+// ============================================================
+// CreateUser
+//
+// PERUBAHAN:
+//   - must_change_password = true otomatis dari repository
+//   - Tidak ada perubahan di sini, logikanya di repo
+// ============================================================
+
 func (s *Service) CreateUser(username, password, name, role, tipe string, branchID, divisionID int) error {
-	// Cek username sudah dipakai belum
 	exists, err := s.Repo.UsernameExists(username)
 	if err != nil {
 		return err
