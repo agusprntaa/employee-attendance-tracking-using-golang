@@ -53,6 +53,7 @@ type ProfileResponse struct {
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	Tipe         string `json:"tipe"`
+	Status       string `json:"status"`
 	DivisionName string `json:"division_name"`
 	BranchName   string `json:"branch_name"`
 	PhotoURL     string `json:"photo_url"`
