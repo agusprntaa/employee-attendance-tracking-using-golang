@@ -19,7 +19,7 @@ func NewEmployeeRepo(db *sql.DB) *EmployeeRepo {
 func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status string) ([]models.EmployeeDetail, int, error) {
 	offset := utils.Offset(page, limit)
 
-	where := "WHERE e.branch_id = $1"
+	where := "WHERE e.branch_id = $1 AND e.role = 'karyawan'"
 	args := []interface{}{branchID}
 	argIdx := 2
 
@@ -142,18 +142,17 @@ func (r *EmployeeRepo) Create(req *models.CreateEmployeeRequest, hashedPassword 
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`,
-		req.Username,
-		hashedPassword,
-		req.Name,
-		req.Role,
-		req.Tipe,
-		"active",
-		req.DivisionID,
-		branchID,
+		req.Username,   // $1
+		hashedPassword, // $2
+		req.Name,       // $3
+		"karyawan",     // $4 - hardcode role
+		"cabang",       // $5 - hardcode tipe
+		"active",       // $6
+		req.DivisionID, // $7
+		branchID,       // $8
 	).Scan(&id)
 	return id, err
 }
-
 // Update — fix: tambah name di SET
 // Sebelum: hanya update role dan division_id
 // Sesudah: update name, role, division_id

@@ -38,6 +38,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	divisionH := handlers.NewDivisionHandler(divRepo, empRepo, attendanceRepo)
 	settingsH := handlers.NewSettingsHandler(settingsRepo)
 	qrH := handlers.NewQRHandler(qrRepo)
+	
 
 	// ─── Health Check (public) ─────────────────────────────────────────────────
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -52,7 +53,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 
 	// ─── Protected Routes (wajib token + role admin) ───────────────────────────
 	admin := app.Group("/admin-cabang", auth.AuthMiddleware, auth.RequireAdmin)
-
+	
 	// Dashboard
 	admin.Get("/dashboard", dashboardH.GetDashboard)
 

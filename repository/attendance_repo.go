@@ -19,7 +19,7 @@ func NewAttendanceRepo(db *sql.DB) *AttendanceRepo {
 // Semua kolom sesuai tabel attendance di DB
 func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string) ([]models.Attendance, error) {
 
-	where := `WHERE e.branch_id = $1`
+	where := `WHERE e.branch_id = $1 AND e.role = 'karyawan'`
 	args := []interface{}{branchID}
 	argIdx := 2
 
@@ -116,6 +116,7 @@ func (r *AttendanceRepo) DashboardStats(branchID int) (*models.DashboardStats, e
 		FROM employees
 		WHERE branch_id = $1
 		AND status = 'active'
+		AND role = 'karyawan'
 	`, branchID).Scan(&stats.TotalEmployee)
 
 	if err != nil {

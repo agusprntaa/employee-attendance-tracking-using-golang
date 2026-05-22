@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"absensi_karyawan/models"
 	"database/sql"
 	"time"
 )
@@ -80,4 +81,93 @@ func (r *Repository) UsernameExists(username string) (bool, error) {
 		SELECT COUNT(*) FROM employees WHERE username = $1
 	`, username).Scan(&count)
 	return count > 0, err
+}
+
+//ADD BRANCH ADMIN
+func (r *Repository) FindBranchAdmin(username string) (*User, string, error) {
+    var user User
+    var hashed string
+
+    err := r.DB.QueryRow(`
+        SELECT id, name, username, role, branch_id, password
+        FROM employees
+        WHERE username = $1 AND role = 'branch_admin' AND status = 'active'
+    `, username).Scan(
+        &user.ID,
+        &user.Name,
+        &user.Username,
+        &user.Role,
+        &user.BranchID,
+        &hashed,
+    )
+
+    if err != nil {
+        return nil, "", err
+    }
+
+    user.EmployeeType = "admin"
+    return &user, hashed, nil
+}
+
+func (r *Repository) CreateBranchAdmin(branchID int, username, passwordHash, name string) error {
+    _, err := r.DB.Exec(`
+        INSERT INTO employees (username, password, name, role, branch_id, status, tipe)
+        VALUES ($1, $2, $3, $4, $5, 'active', 'admin')
+    `, username, passwordHash, name, "branch_admin", branchID)
+    return err
+}
+
+func (r *Repository) CheckBranchAdminUsernameExists(username string) (bool, error) {
+    var count int
+    err := r.DB.QueryRow(`
+        SELECT COUNT(*) FROM employees WHERE username = $1 AND role = 'branch_admin'
+    `, username).Scan(&count)
+    return count > 0, err
+}
+
+func (r *Repository) GetBranchAdmins(branchID int) ([]models.EmployeeDetail, error) {
+    rows, err := r.DB.Query(`
+        SELECT 
+            e.id,
+            e.username,
+            COALESCE(e.name, '') AS name,
+            e.role,
+            COALESCE(e.status, 'active') AS status,
+            e.created_at,
+            e.branch_id,
+            COALESCE(b.name, '') AS branch_name
+        FROM employees e
+        LEFT JOIN branches b ON e.branch_id = b.id
+        WHERE e.branch_id = $1 AND e.role = 'branch_admin'
+        ORDER BY e.created_at DESC
+    `, branchID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var admins []models.EmployeeDetail
+    for rows.Next() {
+        var admin models.EmployeeDetail
+        err := rows.Scan(
+            &admin.ID,
+            &admin.Username,
+            &admin.Name,
+            &admin.Role,
+            &admin.Status,
+            &admin.CreatedAt,
+            &admin.BranchID,
+            &admin.BranchName,
+        )
+        if err != nil {
+            return nil, err
+        }
+        admins = append(admins, admin)
+    }
+    return admins, nil
+}
+
+func (r *Repository) DeleteBranchAdmin(adminID int) error {
+    _, err := r.DB.Exec(`DELETE FROM employees WHERE id = $1 AND role = 'branch_admin'`, adminID)
+    return err
 }

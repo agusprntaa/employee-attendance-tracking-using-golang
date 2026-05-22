@@ -142,3 +142,20 @@ type GlobalBranchDetail struct {
 	Status               string     `json:"status"`
 	CreatedDate          *time.Time `json:"created_date"`
 }
+// ─── BRANCH ADMIN ─────────────────────────────────────────────────────────────
+ 
+/// CreateBranchAdminRequest - FE kirim branch_name bukan branch_id
+type CreateBranchAdminRequest struct {
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Name       string `json:"full_name"`   // nama lengkap
+	BranchName string `json:"branch_name"` // FE kirim nama cabang
+}
+ 
+// UpdateBranchAdminRequest - FE kirim branch_name bukan branch_id
+type UpdateBranchAdminRequest struct {
+	Username   string `json:"username"`
+	Name       string `json:"full_name"`   // nama lengkap
+	BranchName string `json:"branch_name"` // FE kirim nama cabang
+	Status     string `json:"status"`      // active / inactive
+}

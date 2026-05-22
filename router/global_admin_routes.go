@@ -14,6 +14,7 @@ func SetupGlobalAdminRoutes(app *fiber.App, db *sql.DB) {
 
 	globalAdminRepo := repository.NewGlobalAdminRepository(db)
 	globalAdminHandler := handlers.NewGlobalAdminHandler(globalAdminRepo)
+	
 
 	// PREFIX API
 	global := app.Group("/api/global")
@@ -40,4 +41,11 @@ func SetupGlobalAdminRoutes(app *fiber.App, db *sql.DB) {
 	global.Post("/branches", globalAdminHandler.CreateBranch)
 	global.Put("/branches/:id", globalAdminHandler.UpdateBranch)
 	global.Delete("/branches/:id", globalAdminHandler.DeleteBranch)
+
+    // ─── SUPER ADMIN ROUTES ─────────────────────────────
+	global.Get("/branch-admin", globalAdminHandler.GetAllBranchAdmins)
+	global.Post("/branch-admin", globalAdminHandler.CreateBranchAdmin)
+	global.Put("/branch-admin/:adminId", globalAdminHandler.UpdateBranchAdmin)
+	global.Delete("/branch-admin/:adminId", globalAdminHandler.DeleteBranchAdmin)
+	global.Get("/branch-admin/by-branch/:branchId", globalAdminHandler.GetBranchAdmins)
 }
