@@ -23,6 +23,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	}))
 
 	// ─── Repositories ──────────────────────────────────────────────────────────
+	authRepo := &auth.Repository{DB: db}
 	empRepo := repository.NewEmployeeRepo(db)
 	attendanceRepo := repository.NewAttendanceRepo(db)
 	branchRepo := repository.NewBranchRepo(db)
@@ -32,7 +33,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 
 	// ─── Handlers ──────────────────────────────────────────────────────────────
 	dashboardH := handlers.NewDashboardHandler(attendanceRepo)
-	employeeH := handlers.NewEmployeeHandler(empRepo)
+	employeeH := handlers.NewEmployeeHandler(empRepo, authRepo)
 	attendanceH := handlers.NewAttendanceHandler(attendanceRepo)
 	branchH := handlers.NewBranchHandler(branchRepo)
 	divisionH := handlers.NewDivisionHandler(divRepo, empRepo, attendanceRepo)

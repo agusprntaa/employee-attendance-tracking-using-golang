@@ -1,6 +1,7 @@
 package employee
 
 import (
+	"absensi_karyawan/auth"
 	"absensi_karyawan/utils"
 	"fmt"
 	"os"
@@ -13,7 +14,8 @@ import (
 )
 
 type Handler struct {
-	Repo *Repository
+	Repo     *Repository
+	AuthRepo *auth.Repository
 }
 
 // ─────────────────────────────────────────
@@ -131,7 +133,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 		})
 	}
 
-	// Ambil password hash saat ini dari DB
 	currentHash, err := h.Repo.GetPasswordHash(employeeID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -140,7 +141,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verifikasi password lama
 	if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.OldPassword)); err != nil {
 		return c.Status(401).JSON(fiber.Map{
 			"status":  "error",
@@ -149,7 +149,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 		})
 	}
 
-	// Hash password baru
 	newHash, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -158,7 +157,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 		})
 	}
 
-	// Update ke DB
 	if err := h.Repo.UpdatePassword(employeeID, newHash); err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"status":  "error",
@@ -166,25 +164,21 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 		})
 	}
 
+	// ── TAMBAHAN F4 ──────────────────────────────────────
+	// 1. Clear flag must_change_password
+	//    Setelah ini karyawan tidak akan di-block lagi oleh middleware
+	_ = h.AuthRepo.ClearMustChangePassword(employeeID)
+
+	// 2. Hapus semua refresh token
+	//    Paksa semua sesi lama logout — harus login ulang dengan password baru
+	h.AuthRepo.DeleteAllRefreshTokens(employeeID)
+	// ─────────────────────────────────────────────────────
+
 	return c.JSON(fiber.Map{
 		"status":  "success",
-		"message": "Password berhasil diubah",
+		"message": "Password berhasil diubah, silakan login kembali",
 	})
 }
-
-// ─────────────────────────────────────────
-// F5: POST /employee/profile/photo
-//
-// Upload foto profil karyawan.
-// Pakai multipart/form-data dengan field "photo".
-//
-// Validasi:
-//   - Format: jpg, jpeg, png, webp
-//   - Ukuran maksimal: 2MB
-//
-// File disimpan di: uploads/photos/{employeeID}_{timestamp}.{ext}
-// Foto lama otomatis dihapus dari disk saat upload baru.
-// ─────────────────────────────────────────
 
 func (h *Handler) UploadPhoto(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
@@ -195,7 +189,7 @@ func (h *Handler) UploadPhoto(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"code":    "NO_FILE",
-			"message": "File foto wajiib diunggah dengan field 'photo'",
+			"message": "File foto wajib diunggah dengan field 'photo'",
 		})
 	}
 

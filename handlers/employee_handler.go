@@ -14,11 +14,12 @@ import (
 )
 
 type EmployeeHandler struct {
-	empRepo *repository.EmployeeRepo
+	empRepo  *repository.EmployeeRepo
+	AuthRepo *auth.Repository
 }
 
-func NewEmployeeHandler(er *repository.EmployeeRepo) *EmployeeHandler {
-	return &EmployeeHandler{empRepo: er}
+func NewEmployeeHandler(er *repository.EmployeeRepo, ar *auth.Repository) *EmployeeHandler {
+	return &EmployeeHandler{empRepo: er, AuthRepo: ar}
 }
 
 func (h *EmployeeHandler) List(c *fiber.Ctx) error {

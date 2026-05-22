@@ -96,7 +96,8 @@ func main() {
 	}
 
 	employeeHandler := &employee.Handler{
-		Repo: employeeRepo,
+		Repo:     employeeRepo,
+		AuthRepo: authRepo, // ← tambah ini
 	}
 
 	app.Get(
@@ -130,6 +131,7 @@ func main() {
 
 	employeeH2 := handlers.NewEmployeeHandler(
 		empRepo,
+		authRepo,
 	)
 
 	attendanceH2 := handlers.NewAttendanceHandler(
@@ -214,6 +216,18 @@ func main() {
 		"/attendance/checkin",
 		attendanceHandler.CheckIn,
 	)
+
+	// api.Post(
+	// 	"/attendance/checkin",
+	// 	auth.MustChangePasswordMiddleware,
+	// 	attendanceHandler.CheckIn,
+	// )
+
+	// api.Patch(
+	// 	"/attendance/checkout",
+	// 	auth.MustChangePasswordMiddleware,
+	// 	attendanceHandler.CheckOut,
+	// )
 
 	api.Patch(
 		"/attendance/checkout",
