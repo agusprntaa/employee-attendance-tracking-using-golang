@@ -196,3 +196,4 @@ func (s *Service) CreateUser(username, password, name, role, tipe string, branch
 	}
 	return s.Repo.CreateUser(username, hashed, name, role, tipe, branchID, divisionID)
 }
+

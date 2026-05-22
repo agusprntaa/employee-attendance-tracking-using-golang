@@ -2,6 +2,7 @@ package repository
 
 import (
 	"absensi_karyawan/attendance"
+	"absensi_karyawan/models"
 	"absensi_karyawan/utils"
 	"database/sql"
 	"fmt"
@@ -948,5 +949,264 @@ func (r *GlobalAdminRepository) DeleteBranch(branchID int) error {
 		return fmt.Errorf("cabang tidak ditemukan")
 	}
 
+	return nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// GetAllBranchAdmins
+// List semua admin cabang dari semua cabang (untuk halaman Admin Cabang)
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) GetAllBranchAdmins(page, limit int, search, status string) ([]models.EmployeeDetail, int, error) {
+ 
+	offset := (page - 1) * limit
+ 
+	where := "WHERE e.role = 'admin' AND e.tipe = 'cabang'"
+	args := []interface{}{}
+	argIdx := 1
+ 
+	if search != "" {
+		where += fmt.Sprintf(
+			" AND (e.name ILIKE $%d OR e.username ILIKE $%d OR b.name ILIKE $%d)",
+			argIdx, argIdx+1, argIdx+2,
+		)
+		args = append(args, "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		argIdx += 3
+	}
+ 
+	if status != "" {
+		where += fmt.Sprintf(" AND e.status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+ 
+	var total int
+	countQ := fmt.Sprintf(`
+		SELECT COUNT(*) FROM employees e
+		LEFT JOIN branches b ON e.branch_id = b.id
+		%s
+	`, where)
+	r.db.QueryRow(countQ, args...).Scan(&total)
+ 
+	dataQ := fmt.Sprintf(`
+		SELECT
+			e.id,
+			e.username,
+			COALESCE(e.name, '') AS name,
+			e.role,
+			COALESCE(e.tipe, '') AS tipe,
+			COALESCE(e.status, 'active') AS status,
+			e.created_at,
+			e.branch_id,
+			COALESCE(b.name, '') AS branch_name
+		FROM employees e
+		LEFT JOIN branches b ON e.branch_id = b.id
+		%s
+		ORDER BY e.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, where, argIdx, argIdx+1)
+ 
+	args = append(args, limit, offset)
+ 
+	rows, err := r.db.Query(dataQ, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+ 
+	var admins []models.EmployeeDetail
+	for rows.Next() {
+		var admin models.EmployeeDetail
+		err := rows.Scan(
+			&admin.ID,
+			&admin.Username,
+			&admin.Name,
+			&admin.Role,
+			&admin.Tipe,
+			&admin.Status,
+			&admin.CreatedAt,
+			&admin.BranchID,
+			&admin.BranchName,
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+		admins = append(admins, admin)
+	}
+ 
+	return admins, total, nil
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// GetBranchIDByName
+// Lookup branch_name → branch_id (FE kirim nama cabang)
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) GetBranchIDByName(name string) (int, error) {
+	var id int
+	err := r.db.QueryRow(`
+		SELECT id FROM branches WHERE name = $1
+	`, name).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("cabang '%s' tidak ditemukan", name)
+	}
+	return id, err
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// CreateBranchAdmin
+// DIPERBAIKI: tambah field name (nama lengkap)
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) CreateBranchAdmin(
+	branchID int,
+	username string,
+	password string,
+	name string,
+) error {
+ 
+	// cek username sudah ada
+	var exists int
+	r.db.QueryRow(`SELECT COUNT(*) FROM employees WHERE username = $1`, username).Scan(&exists)
+	if exists > 0 {
+		return fmt.Errorf("username '%s' sudah digunakan", username)
+	}
+ 
+	hashedPassword, err := utils.HashPassword(password)
+	if err != nil {
+		return err
+	}
+ 
+	_, err = r.db.Exec(`
+		INSERT INTO employees (username, password, name, role, tipe, branch_id, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`,
+		username,
+		hashedPassword,
+		name,
+		"admin",
+		"cabang",
+		branchID,
+		"active",
+	)
+ 
+	return err
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// UpdateBranchAdmin
+// Edit username, nama lengkap, cabang, dan status admin cabang
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) UpdateBranchAdmin(
+	adminID int,
+	username string,
+	name string,
+	branchID int,
+	status string,
+) error {
+ 
+	// cek admin ada dengan role admin dan tipe cabang
+	var exists int
+	r.db.QueryRow(
+		`SELECT COUNT(*) FROM employees WHERE id = $1 AND role = 'admin' AND tipe = 'cabang'`,
+		adminID,
+	).Scan(&exists)
+	if exists == 0 {
+		return fmt.Errorf("admin cabang tidak ditemukan")
+	}
+ 
+	// cek username tidak bentrok dengan akun lain
+	var conflict int
+	r.db.QueryRow(
+		`SELECT COUNT(*) FROM employees WHERE username = $1 AND id != $2`,
+		username, adminID,
+	).Scan(&conflict)
+	if conflict > 0 {
+		return fmt.Errorf("username '%s' sudah digunakan", username)
+	}
+ 
+	result, err := r.db.Exec(`
+		UPDATE employees
+		SET username = $1, name = $2, branch_id = $3, status = $4
+		WHERE id = $5 AND role = 'admin' AND tipe = 'cabang'
+	`, username, name, branchID, status, adminID)
+ 
+	if err != nil {
+		return err
+	}
+ 
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("admin cabang tidak ditemukan")
+	}
+ 
+	return nil
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// GetBranchAdmins (per branch - tetap dipertahankan)
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) GetBranchAdmins(branchID int) ([]models.EmployeeDetail, error) {
+ 
+	rows, err := r.db.Query(`
+		SELECT
+			e.id,
+			e.username,
+			COALESCE(e.name, '') AS name,
+			e.role,
+			COALESCE(e.status, 'active') AS status,
+			e.created_at,
+			e.branch_id,
+			COALESCE(b.name, '') AS branch_name
+		FROM employees e
+		LEFT JOIN branches b ON e.branch_id = b.id
+		WHERE e.branch_id = $1
+		AND e.role = 'admin' AND e.tipe = 'cabang'
+		ORDER BY e.created_at DESC
+	`, branchID)
+ 
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+ 
+	var admins []models.EmployeeDetail
+	for rows.Next() {
+		var admin models.EmployeeDetail
+		err := rows.Scan(
+			&admin.ID,
+			&admin.Username,
+			&admin.Name,
+			&admin.Role,
+			&admin.Status,
+			&admin.CreatedAt,
+			&admin.BranchID,
+			&admin.BranchName,
+		)
+		if err != nil {
+			return nil, err
+		}
+		admins = append(admins, admin)
+	}
+ 
+	return admins, nil
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// DeleteBranchAdmin
+// ─────────────────────────────────────────────────────────────
+func (r *GlobalAdminRepository) DeleteBranchAdmin(adminID int) error {
+ 
+	result, err := r.db.Exec(`
+		DELETE FROM employees
+		WHERE id = $1 AND role = 'admin' AND tipe = 'cabang'
+	`, adminID)
+ 
+	if err != nil {
+		return err
+	}
+ 
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("admin cabang tidak ditemukan")
+	}
+ 
 	return nil
 }

@@ -89,9 +89,8 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 	if strings.TrimSpace(req.Name) == "" {
 		return utils.BadRequest(c, "NAME_REQUIRED", "Nama wajib diisi")
 	}
-	if len(req.Password) < 6 {
-		return utils.BadRequest(c, "PASSWORD_TOO_SHORT", "Password minimal 6 karakter")
-	}
+	// generate password acak — tidak perlu dari request
+	plainPassword := utils.GenerateRandomPassword()
 
 	validRoles := map[string]bool{"karyawan": true, "admin_cabang": true, "admin": true}
 	if !validRoles[req.Role] {
@@ -109,7 +108,7 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "USERNAME_TAKEN", "Username sudah digunakan")
 	}
 
-	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(plainPassword), 12)
 	if err != nil {
 		return utils.InternalError(c, "Gagal memproses password")
 	}
@@ -121,8 +120,10 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 	}
 
 	return utils.Created(c, fiber.Map{
-		"id":      id,
-		"message": "Karyawan berhasil ditambahkan",
+		"id":           id,
+		"username":     req.Username,
+		"temp_password": plainPassword,
+		"message":      "Karyawan berhasil ditambahkan",
 	})
 }
 

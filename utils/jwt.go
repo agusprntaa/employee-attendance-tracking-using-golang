@@ -106,11 +106,6 @@ func GenerateRefreshToken(userID int, role string) (string, time.Time, error) {
 // HASH & COMPARE PASSWORD
 // ============================================================
 
-func HashPassword(password string) (string, error) {
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), 12)
-	return string(hashed), err
-}
-
 func CheckPassword(plain, hashed string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain)) == nil
 }

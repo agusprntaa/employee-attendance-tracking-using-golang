@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"absensi_karyawan/models"
 	"absensi_karyawan/repository"
 	"absensi_karyawan/utils"
 	"fmt"
@@ -20,7 +21,7 @@ func NewGlobalAdminHandler(repo *repository.GlobalAdminRepository) *GlobalAdminH
 }
 
 // ============================================================
-// GET /admin-pusat/dashboard
+// GET /api/global/dashboard
 // ============================================================
 func (h *GlobalAdminHandler) GetDashboard(c *fiber.Ctx) error {
 
@@ -36,11 +37,9 @@ func (h *GlobalAdminHandler) GetDashboard(c *fiber.Ctx) error {
 	if attendancePerBranch == nil {
 		attendancePerBranch = []map[string]interface{}{}
 	}
-
 	if workMode == nil {
 		workMode = map[string]interface{}{}
 	}
-
 	if branchPerformance == nil {
 		branchPerformance = []map[string]interface{}{}
 	}
@@ -54,13 +53,12 @@ func (h *GlobalAdminHandler) GetDashboard(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/employees
+// GET /api/global/employees
 // ============================================================
 func (h *GlobalAdminHandler) GetAllEmployees(c *fiber.Ctx) error {
 
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 10)
-
 	search := c.Query("search")
 	branch := c.Query("branch")
 	status := c.Query("status")
@@ -68,19 +66,11 @@ func (h *GlobalAdminHandler) GetAllEmployees(c *fiber.Ctx) error {
 	if page < 1 {
 		page = 1
 	}
-
 	if limit < 1 || limit > 100 {
 		limit = 10
 	}
 
-	data, total, err := h.Repo.GetAllEmployees(
-		page,
-		limit,
-		search,
-		branch,
-		status,
-	)
-
+	data, total, err := h.Repo.GetAllEmployees(page, limit, search, branch, status)
 	if err != nil {
 		return utils.InternalError(c, "Gagal mengambil data karyawan")
 	}
@@ -97,7 +87,7 @@ func (h *GlobalAdminHandler) GetAllEmployees(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/employees/:id
+// GET /api/global/employees/:id
 // ============================================================
 func (h *GlobalAdminHandler) GetEmployeeDetail(c *fiber.Ctx) error {
 
@@ -108,11 +98,9 @@ func (h *GlobalAdminHandler) GetEmployeeDetail(c *fiber.Ctx) error {
 
 	data, err := h.Repo.GetEmployeeDetail(employeeID)
 	if err != nil {
-
 		if err.Error() == "karyawan tidak ditemukan" {
 			return utils.NotFound(c, "Karyawan tidak ditemukan")
 		}
-
 		return utils.InternalError(c, "Gagal mengambil detail karyawan")
 	}
 
@@ -120,7 +108,7 @@ func (h *GlobalAdminHandler) GetEmployeeDetail(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/attendance/today
+// GET /api/global/attendance/today
 // ============================================================
 func (h *GlobalAdminHandler) GetTodayAttendance(c *fiber.Ctx) error {
 
@@ -131,17 +119,11 @@ func (h *GlobalAdminHandler) GetTodayAttendance(c *fiber.Ctx) error {
 	if page < 1 {
 		page = 1
 	}
-
 	if limit < 1 || limit > 100 {
 		limit = 10
 	}
 
-	result, err := h.Repo.GetTodayAttendanceOverview(
-		page,
-		limit,
-		search,
-	)
-
+	result, err := h.Repo.GetTodayAttendanceOverview(page, limit, search)
 	if err != nil {
 		return utils.InternalError(c, "Gagal mengambil data kehadiran hari ini")
 	}
@@ -150,12 +132,11 @@ func (h *GlobalAdminHandler) GetTodayAttendance(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/attendance/analytics
+// GET /api/global/attendance/analytics
 // ============================================================
 func (h *GlobalAdminHandler) GetAttendanceAnalytics(c *fiber.Ctx) error {
 
 	period := c.Query("period", "weekly")
-
 	if period != "weekly" && period != "monthly" {
 		period = "weekly"
 	}
@@ -169,31 +150,23 @@ func (h *GlobalAdminHandler) GetAttendanceAnalytics(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/branches
+// GET /api/global/branches
 // ============================================================
 func (h *GlobalAdminHandler) GetAllBranches(c *fiber.Ctx) error {
 
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 10)
-
 	search := c.Query("search")
 	status := c.Query("status")
 
 	if page < 1 {
 		page = 1
 	}
-
 	if limit < 1 || limit > 100 {
 		limit = 10
 	}
 
-	data, total, err := h.Repo.GetAllBranches(
-		page,
-		limit,
-		search,
-		status,
-	)
-
+	data, total, err := h.Repo.GetAllBranches(page, limit, search, status)
 	if err != nil {
 		return utils.InternalError(c, "Gagal mengambil data cabang")
 	}
@@ -210,7 +183,7 @@ func (h *GlobalAdminHandler) GetAllBranches(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// GET /admin-pusat/branches/:id
+// GET /api/global/branches/:id
 // ============================================================
 func (h *GlobalAdminHandler) GetBranchDetail(c *fiber.Ctx) error {
 
@@ -221,11 +194,9 @@ func (h *GlobalAdminHandler) GetBranchDetail(c *fiber.Ctx) error {
 
 	data, err := h.Repo.GetBranchDetail(branchID)
 	if err != nil {
-
 		if err.Error() == "cabang tidak ditemukan" {
 			return utils.NotFound(c, "Cabang tidak ditemukan")
 		}
-
 		return utils.InternalError(c, "Gagal mengambil detail cabang")
 	}
 
@@ -233,7 +204,7 @@ func (h *GlobalAdminHandler) GetBranchDetail(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// POST /admin-pusat/branches
+// POST /api/global/branches
 // ============================================================
 func (h *GlobalAdminHandler) CreateBranch(c *fiber.Ctx) error {
 
@@ -251,21 +222,12 @@ func (h *GlobalAdminHandler) CreateBranch(c *fiber.Ctx) error {
 	}
 
 	if req.BranchName == "" {
-		return utils.BadRequest(
-			c,
-			"VALIDATION_ERROR",
-			"Nama cabang wajib diisi",
-		)
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Nama cabang wajib diisi")
 	}
 
 	req.Status = strings.ToLower(req.Status)
-
 	if req.Status != "active" && req.Status != "inactive" {
-		return utils.BadRequest(
-			c,
-			"VALIDATION_ERROR",
-			"Status harus active atau inactive",
-		)
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Status harus active atau inactive")
 	}
 
 	if req.RadiusMeter <= 0 {
@@ -273,14 +235,8 @@ func (h *GlobalAdminHandler) CreateBranch(c *fiber.Ctx) error {
 	}
 
 	id, err := h.Repo.CreateBranch(
-		req.BranchName,
-		req.Address,
-		req.Latitude,
-		req.Longitude,
-		req.RadiusMeter,
-		req.Status,
+		req.BranchName, req.Address, req.Latitude, req.Longitude, req.RadiusMeter, req.Status,
 	)
-
 	if err != nil {
 		return utils.InternalError(c, err.Error())
 	}
@@ -296,7 +252,7 @@ func (h *GlobalAdminHandler) CreateBranch(c *fiber.Ctx) error {
 }
 
 // ============================================================
-// PUT /admin-pusat/branches/:id
+// PUT /api/global/branches/:id
 // ============================================================
 func (h *GlobalAdminHandler) UpdateBranch(c *fiber.Ctx) error {
 
@@ -319,26 +275,17 @@ func (h *GlobalAdminHandler) UpdateBranch(c *fiber.Ctx) error {
 	}
 
 	err = h.Repo.UpdateBranch(
-		id,
-		req.BranchName,
-		req.Address,
-		req.Latitude,
-		req.Longitude,
-		req.RadiusMeter,
-		req.Status,
+		id, req.BranchName, req.Address, req.Latitude, req.Longitude, req.RadiusMeter, req.Status,
 	)
-
 	if err != nil {
 		return utils.InternalError(c, "Gagal update cabang")
 	}
 
-	return utils.Success(c, fiber.Map{
-		"message": "Branch berhasil diupdate",
-	})
+	return utils.Success(c, fiber.Map{"message": "Branch berhasil diupdate"})
 }
 
 // ============================================================
-// DELETE /admin-pusat/branches/:id
+// DELETE /api/global/branches/:id
 // ============================================================
 func (h *GlobalAdminHandler) DeleteBranch(c *fiber.Ctx) error {
 
@@ -352,7 +299,192 @@ func (h *GlobalAdminHandler) DeleteBranch(c *fiber.Ctx) error {
 		return utils.InternalError(c, "Gagal menghapus cabang")
 	}
 
+	return utils.Success(c, fiber.Map{"message": "Branch berhasil dihapus"})
+}
+
+// ============================================================
+// GET /api/global/branch-admin
+// List SEMUA admin cabang (untuk halaman Admin Cabang)
+// Query: ?search=xxx&status=active
+// ============================================================
+func (h *GlobalAdminHandler) GetAllBranchAdmins(c *fiber.Ctx) error {
+
+    page := c.QueryInt("page", 1)
+    limit := c.QueryInt("limit", 10)
+    search := c.Query("search")
+    status := c.Query("status")
+
+    if page < 1 {
+        page = 1
+    }
+    if limit < 1 || limit > 100 {
+        limit = 10
+    }
+
+    // ambil list admin cabang
+    admins, total, err := h.Repo.GetAllBranchAdmins(page, limit, search, status)
+    if err != nil {
+        return utils.InternalError(c, "Gagal mengambil data admin cabang")
+    }
+    if admins == nil {
+        admins = []models.EmployeeDetail{}
+    }
+
+    // ambil list cabang untuk dropdown
+    branches, _, err := h.Repo.GetAllBranches(1, 100, "", "active")
+    if err != nil {
+        branches = []map[string]interface{}{}
+    }
+
+    totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+    return utils.Success(c, fiber.Map{
+        "admins": fiber.Map{
+            "data":         admins,
+            "total_data":   total,
+            "current_page": page,
+            "total_pages":  totalPages,
+            "limit":        limit,
+        },
+        "branches": branches,
+    })
+}
+// ============================================================
+// POST /api/global/branch-admin
+// Tambah admin cabang baru
+// Body: { username, password, name, branch_id }
+// ============================================================
+func (h *GlobalAdminHandler) CreateBranchAdmin(c *fiber.Ctx) error {
+ 
+	var req models.CreateBranchAdminRequest
+ 
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Format request tidak valid")
+	}
+ 
+	if req.Username == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Username wajib diisi")
+	}
+	if req.Password == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Password wajib diisi")
+	}
+	if len(req.Password) < 6 {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Password minimal 6 karakter")
+	}
+	if req.Name == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Nama lengkap wajib diisi")
+	}
+	if req.BranchName == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Cabang wajib dipilih")
+	}
+ 
+	// lookup branch_name → branch_id
+	branchID, err := h.Repo.GetBranchIDByName(req.BranchName)
+	if err != nil {
+		return utils.BadRequest(c, "BRANCH_NOT_FOUND", err.Error())
+	}
+ 
+	err = h.Repo.CreateBranchAdmin(branchID, req.Username, req.Password, req.Name)
+	if err != nil {
+		return utils.BadRequest(c, "CREATE_FAILED", err.Error())
+	}
+ 
 	return utils.Success(c, fiber.Map{
-		"message": "Branch berhasil dihapus",
+		"message": "Admin cabang berhasil ditambahkan",
 	})
+}
+
+// ============================================================
+// PUT /api/global/branch-admin/:adminId
+// Edit admin cabang: username, nama lengkap, cabang, status
+// Body: { username, name, branch_id, status }
+// ============================================================
+func (h *GlobalAdminHandler) UpdateBranchAdmin(c *fiber.Ctx) error {
+
+	adminID, err := strconv.Atoi(c.Params("adminId"))
+	if err != nil || adminID <= 0 {
+		return utils.BadRequest(c, "INVALID_ID", "Admin ID tidak valid")
+	}
+
+	var req models.UpdateBranchAdminRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return utils.BadRequest(c, "INVALID_BODY", "Format request tidak valid")
+	}
+
+	if req.Username == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Username wajib diisi")
+	}
+	if req.Name == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Nama lengkap wajib diisi")
+	}
+	if req.BranchName == "" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Cabang wajib dipilih")
+	}
+
+	req.Status = strings.ToLower(req.Status)
+	if req.Status != "active" && req.Status != "inactive" {
+		return utils.BadRequest(c, "VALIDATION_ERROR", "Status harus active atau inactive")
+	}
+
+	// lookup branch_name → branch_id
+	branchID, err := h.Repo.GetBranchIDByName(req.BranchName)
+	if err != nil {
+		return utils.BadRequest(c, "BRANCH_NOT_FOUND", err.Error())
+	}
+
+	err = h.Repo.UpdateBranchAdmin(adminID, req.Username, req.Name, branchID, req.Status)
+	if err != nil {
+		return utils.BadRequest(c, "UPDATE_FAILED", err.Error())
+	}
+
+	return utils.Success(c, fiber.Map{
+		"message": "Admin cabang berhasil diperbarui",
+	})
+}
+
+// ============================================================
+// GET /api/global/branch-admin/by-branch/:branchId
+// List admin cabang berdasarkan branch (tetap dipertahankan)
+// ============================================================
+func (h *GlobalAdminHandler) GetBranchAdmins(c *fiber.Ctx) error {
+
+	branchID, err := strconv.Atoi(c.Params("branchId"))
+	if err != nil {
+		return utils.BadRequest(c, "INVALID_ID", "Branch ID tidak valid")
+	}
+
+	admins, err := h.Repo.GetBranchAdmins(branchID)
+	if err != nil {
+		return utils.InternalError(c, "Gagal mengambil data admin")
+	}
+
+	if admins == nil {
+		admins = []models.EmployeeDetail{}
+	}
+
+	return utils.Success(c, fiber.Map{
+		"data": admins,
+	})
+}
+
+// ============================================================
+// DELETE /api/global/branch-admin/:adminId
+// ============================================================
+func (h *GlobalAdminHandler) DeleteBranchAdmin(c *fiber.Ctx) error {
+
+	adminID, err := strconv.Atoi(c.Params("adminId"))
+	if err != nil {
+		return utils.BadRequest(c, "INVALID_ID", "Admin ID tidak valid")
+	}
+
+	err = h.Repo.DeleteBranchAdmin(adminID)
+	if err != nil {
+		return utils.InternalError(c, "Gagal menghapus admin cabang: "+err.Error())
+	}
+
+	return utils.Success(c, fiber.Map{
+		"message": "Admin cabang berhasil dihapus",
+	})
+	
 }

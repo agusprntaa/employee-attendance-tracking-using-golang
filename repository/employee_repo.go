@@ -19,7 +19,7 @@ func NewEmployeeRepo(db *sql.DB) *EmployeeRepo {
 func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status string) ([]models.EmployeeDetail, int, error) {
 	offset := utils.Offset(page, limit)
 
-	where := "WHERE e.branch_id = $1"
+	where := "WHERE e.branch_id = $1 AND e.role = 'karyawan'"
 	args := []interface{}{branchID}
 	argIdx := 2
 
@@ -137,20 +137,34 @@ func (r *EmployeeRepo) UsernameExists(username string) (bool, error) {
 
 func (r *EmployeeRepo) Create(req *models.CreateEmployeeRequest, hashedPassword string, branchID int) (int, error) {
 	var id int
+
 	err := r.db.QueryRow(`
-		INSERT INTO employees (username, password, name, role, tipe, status, division_id, branch_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO employees (
+			username,
+			password,
+			name,
+			role,
+			tipe,
+			status,
+			division_id,
+			branch_id,
+			must_change_password
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, true
+		)
 		RETURNING id
 	`,
-		req.Username,
-		hashedPassword,
-		req.Name,
-		req.Role,
-		req.Tipe,
-		"active",
-		req.DivisionID,
-		branchID,
+		req.Username,   // $1
+		hashedPassword, // $2
+		req.Name,       // $3
+		"karyawan",     // $4
+		"cabang",       // $5
+		"active",       // $6
+		req.DivisionID, // $7
+		branchID,       // $8
 	).Scan(&id)
+
 	return id, err
 }
 
