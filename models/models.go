@@ -17,17 +17,26 @@ type Employee struct {
 }
 
 type EmployeeDetail struct {
-	ID           int       `json:"id"`
-	Username     string    `json:"username"`
-	Name         string    `json:"full_name"` // tambah Name
-	Role         string    `json:"role"`
-	Tipe         string    `json:"tipe"`
-	Status       string    `json:"status"`
-	DivisionID   *int      `json:"division_id,omitempty"`
-	DivisionName string    `json:"division_name,omitempty"`
-	BranchID     *int      `json:"branch_id,omitempty"`
-	BranchName   string    `json:"branch_name,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID        int    `json:"id"`
+	FullName  string `json:"full_name"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	Address   string `json:"address"`
+	BirthDate string `json:"birth_date"`
+	PhotoURL  string `json:"photo_url"`
+
+	Role   string `json:"role"`
+	Tipe   string `json:"tipe"`
+	Status string `json:"status"`
+
+	DivisionID   *int   `json:"division_id"`
+	DivisionName string `json:"division_name"`
+
+	BranchID   int    `json:"branch_id"`
+	BranchName string `json:"branch_name"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateEmployeeRequest struct {

@@ -6,6 +6,7 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/lib/pq v1.12.3
+	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.51.0
 )
 

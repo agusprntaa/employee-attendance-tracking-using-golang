@@ -120,10 +120,10 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 	}
 
 	return utils.Created(c, fiber.Map{
-		"id":           id,
-		"username":     req.Username,
+		"id":            id,
+		"username":      req.Username,
 		"temp_password": plainPassword,
-		"message":      "Karyawan berhasil ditambahkan",
+		"message":       "Karyawan berhasil ditambahkan",
 	})
 }
 
@@ -166,7 +166,7 @@ func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
 
 	// Kalau name kosong di request, pertahankan name yang lama
 	if strings.TrimSpace(req.Name) == "" {
-		req.Name = emp.Name
+		req.Name = emp.FullName
 	}
 
 	if strings.TrimSpace(req.Username) == "" {

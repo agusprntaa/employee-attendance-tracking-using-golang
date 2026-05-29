@@ -322,7 +322,7 @@ func (r *Repository) GetBranchAdmins(branchID int) ([]models.EmployeeDetail, err
 		err := rows.Scan(
 			&admin.ID,
 			&admin.Username,
-			&admin.Name,
+			&admin.FullName,
 			&admin.Role,
 			&admin.Status,
 			&admin.CreatedAt,

@@ -69,7 +69,7 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 		err := rows.Scan(
 			&emp.ID,
 			&emp.Username,
-			&emp.Name,
+			&emp.FullName,
 			&emp.Role,
 			&emp.Tipe,
 			&emp.Status,
@@ -88,44 +88,71 @@ func (r *EmployeeRepo) ListByBranch(branchID, page, limit int, search, status st
 }
 
 func (r *EmployeeRepo) GetByID(id, branchID int) (*models.EmployeeDetail, error) {
+
 	query := `
 		SELECT 
 			e.id,
+			COALESCE(e.name, '') AS full_name,
 			e.username,
-			COALESCE(e.name, '') AS name,
+			COALESCE(e.email, '') AS email,
+			COALESCE(e.phone, '') AS phone,
+			COALESCE(e.address, '') AS address,
+			COALESCE(e.birth_date::text, '') AS birth_date,
+			COALESCE(e.photo_url, '') AS photo_url,
+
 			e.role,
 			e.tipe,
 			COALESCE(e.status, 'active') AS status,
+
 			e.division_id,
 			COALESCE(d.name, '') AS division_name,
+
 			e.branch_id,
 			COALESCE(b.name, '') AS branch_name,
+
 			e.created_at
+
 		FROM employees e
 		LEFT JOIN divisions d ON e.division_id = d.id
 		LEFT JOIN branches b ON e.branch_id = b.id
-		WHERE e.id = $1 AND e.branch_id = $2
+
+		WHERE e.id = $1
+		AND e.branch_id = $2
 	`
+
 	var emp models.EmployeeDetail
+
 	err := r.db.QueryRow(query, id, branchID).Scan(
 		&emp.ID,
+		&emp.FullName,
 		&emp.Username,
-		&emp.Name,
+		&emp.Email,
+		&emp.Phone,
+		&emp.Address,
+		&emp.BirthDate,
+		&emp.PhotoURL,
+
 		&emp.Role,
 		&emp.Tipe,
 		&emp.Status,
+
 		&emp.DivisionID,
 		&emp.DivisionName,
+
 		&emp.BranchID,
 		&emp.BranchName,
+
 		&emp.CreatedAt,
 	)
+
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return &emp, nil
 }
 
