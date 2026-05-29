@@ -1201,7 +1201,7 @@ func (r *GlobalAdminRepository) DeleteBranchAdmin(adminID int) error {
  
 	if err != nil {
 		return err
-	}
+	} 
  
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {

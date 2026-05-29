@@ -10,7 +10,7 @@ import (
 func ConnectDB() *sql.DB {
 	// ✅ FIX: tambah TimeZone=Asia/Makassar agar lib/pq membaca timestamp
 	// dari PostgreSQL langsung dalam WITA, bukan UTC.
-	connStr := "host=localhost user=postgres password=agusadi1 dbname=absensi_karyawanBTW port=5432 sslmode=disable TimeZone=Asia/Makassar"
+	connStr := "host=localhost user=postgres password=1234 dbname=absensi_karyawan port=5432 sslmode=disable TimeZone=Asia/Makassar"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal("DB Open Error:", err)

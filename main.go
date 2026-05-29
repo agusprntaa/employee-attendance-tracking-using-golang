@@ -97,7 +97,7 @@ func main() {
 
 	employeeHandler := &employee.Handler{
 		Repo:     employeeRepo,
-		AuthRepo: authRepo, // ← tambah ini
+		AuthRepo: authRepo,
 	}
 
 	app.Get(
@@ -120,6 +120,9 @@ func main() {
 	settingsRepo := repository.NewSettingsRepo(db)
 
 	qrRepo := repository.NewQRRepo(db)
+
+	// ─── LEAVE REPOSITORY (BARU) ──────────────────────
+	leaveRepo := repository.NewLeaveRepo(db)
 
 	// =====================================================
 	// BE2 HANDLERS (ADMIN PANEL)
@@ -155,6 +158,9 @@ func main() {
 	qrH := handlers.NewQRHandler(
 		qrRepo,
 	)
+
+	// ─── LEAVE HANDLER (BARU) ─────────────────────────
+	leaveH := handlers.NewLeaveHandler(leaveRepo)
 
 	// =====================================================
 	// LIMITER
@@ -216,18 +222,6 @@ func main() {
 		"/attendance/checkin",
 		attendanceHandler.CheckIn,
 	)
-
-	// api.Post(
-	// 	"/attendance/checkin",
-	// 	auth.MustChangePasswordMiddleware,
-	// 	attendanceHandler.CheckIn,
-	// )
-
-	// api.Patch(
-	// 	"/attendance/checkout",
-	// 	auth.MustChangePasswordMiddleware,
-	// 	attendanceHandler.CheckOut,
-	// )
 
 	api.Patch(
 		"/attendance/checkout",
@@ -378,6 +372,76 @@ func main() {
 	)
 
 	// =====================================================
+	// LEAVE MANAGEMENT (CUTI) — BARU
+	// =====================================================
+
+	// Ringkasan statistik kartu atas UI
+	admin.Get(
+		"/leave/summary",
+		leaveH.GetSummary,
+	)
+
+	// List pengajuan cuti
+	admin.Get(
+		"/leave/requests",
+		leaveH.GetAllRequests,
+	)
+
+	// Detail pengajuan cuti by ID (untuk modal detail di FE)
+	admin.Get(
+		"/leave/requests/:id",
+		leaveH.GetRequestByID,
+	)
+
+	// Approve / Reject pengajuan cuti
+	admin.Patch(
+		"/leave/:id/status",
+		leaveH.UpdateLeaveStatus,
+	)
+
+	// Lihat kuota cuti karyawan
+	admin.Get(
+		"/leave/quota/:employee_id",
+		leaveH.GetLeaveQuota,
+	)
+
+	// Set kuota manual
+	admin.Patch(
+		"/leave/quota/:employee_id",
+		leaveH.UpdateLeaveQuota,
+	)
+
+	// Kalender — titik per tanggal
+	admin.Get(
+		"/leave/calendar",
+		leaveH.GetCalendarDots,
+	)
+
+	// Kalender — detail tanggal diklik
+	admin.Get(
+		"/leave/calendar/detail",
+		leaveH.GetCalendarDetail,
+	)
+
+	// Hari libur — lihat semua
+	admin.Get(
+		"/holidays",
+		leaveH.GetAllHolidays,
+	)
+
+	// Hari libur — tambah
+	admin.Post(
+		"/holidays",
+		leaveH.CreateHoliday,
+	)
+
+	// Hari libur — hapus
+	admin.Delete(
+		"/holidays/:id",
+		leaveH.DeleteHoliday,
+	)
+
+	// =====================================================
 	// QR ROUTES
 	// HANYA admin_cabang
 	// super_admin ditolak
@@ -413,9 +477,6 @@ func main() {
 		authHandler.CreateUser,
 	)
 
-	// OPTIONAL:
-	// superAdmin.Get("/branches", branchH.ListBranches)
-	// superAdmin.Post("/branches", branchH.CreateBranch)
 
 	router.SetupGlobalAdminRoutes(app, db)
 
