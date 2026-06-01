@@ -42,7 +42,7 @@ type HolidayRow struct {
 	Name string
 }
 
-// ✦ BARU — struct untuk data notifikasi dari DB
+// struct untuk data notifikasi dari DB
 // Berbeda dengan LeaveRequest: tidak butuh Reason & AttachmentPath,
 // tapi butuh IsRead dan UpdatedAt untuk keperluan notifikasi
 type NotificationRow struct {

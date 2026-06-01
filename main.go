@@ -12,6 +12,7 @@ import (
 	"absensi_karyawan/auth"
 	"absensi_karyawan/config"
 	"absensi_karyawan/database"
+	"absensi_karyawan/face"
 	"absensi_karyawan/leave"
 	"absensi_karyawan/router"
 
@@ -48,6 +49,32 @@ func main() {
 	// =====================================================
 
 	db := database.ConnectDB()
+
+	// =====================================================
+	// FACE MODULE
+	// =====================================================
+
+	faceRepo := &face.Repository{
+		DB: db,
+	}
+
+	faceEngine := face.NewInsightFaceEngine(
+		"http://localhost:3000",
+	)
+
+	// alternatif AWS:
+	// faceEngine := face.NewAWSEngine("ap-southeast-1")
+
+	faceService := &face.Service{
+		Repo:      faceRepo,
+		Engine:    faceEngine,
+		DB:        db,
+		Threshold: 0.80,
+	}
+
+	faceHandler := &face.Handler{
+		Service: faceService,
+	}
 
 	// =====================================================
 	// STATIC FILE SERVING
@@ -115,7 +142,7 @@ func main() {
 	)
 
 	// =====================================================
-	// LEAVE MODULE (KARYAWAN) ← TAMBAHAN BARU
+	// LEAVE MODULE (KARYAWAN)
 	// =====================================================
 
 	leaveRepo := &leave.Repository{DB: db}
@@ -242,6 +269,33 @@ func main() {
 		employeeHandler.DeletePhoto,
 	)
 
+	// ── Face / Onboarding ────────────────────────────
+
+	api.Get(
+		"/employee/onboarding-status",
+		faceHandler.GetOnboardingStatus,
+	)
+
+	api.Get(
+		"/employee/face/status",
+		faceHandler.GetFaceStatus,
+	)
+
+	api.Post(
+		"/employee/face/register",
+		faceHandler.RegisterFace,
+	)
+
+	api.Post(
+		"/attendance/face-token",
+		faceHandler.GenerateFaceToken,
+	)
+
+	api.Post(
+		"/attendance/checkin-verify",
+		faceHandler.VerifyAndCheckin,
+	)
+
 	// ── Attendance ───────────────────────────────────────
 
 	api.Post(
@@ -265,7 +319,6 @@ func main() {
 	)
 
 	// ── Leave (Cuti) ─────────────────────────────────────
-	// TAMBAHAN: 6 endpoint baru untuk modul cuti karyawan
 
 	api.Get(
 		"/employee/leave/types",
