@@ -17,17 +17,26 @@ type Employee struct {
 }
 
 type EmployeeDetail struct {
-	ID           int       `json:"id"`
-	Username     string    `json:"username"`
-	Name         string    `json:"full_name"` // tambah Name
-	Role         string    `json:"role"`
-	Tipe         string    `json:"tipe"`
-	Status       string    `json:"status"`
-	DivisionID   *int      `json:"division_id,omitempty"`
-	DivisionName string    `json:"division_name,omitempty"`
-	BranchID     *int      `json:"branch_id,omitempty"`
-	BranchName   string    `json:"branch_name,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID        int    `json:"id"`
+	FullName  string `json:"full_name"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	Address   string `json:"address"`
+	BirthDate string `json:"birth_date"`
+	PhotoURL  string `json:"photo_url"`
+
+	Role   string `json:"role"`
+	Tipe   string `json:"tipe"`
+	Status string `json:"status"`
+
+	DivisionID   *int   `json:"division_id"`
+	DivisionName string `json:"division_name"`
+
+	BranchID   int    `json:"branch_id"`
+	BranchName string `json:"branch_name"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateEmployeeRequest struct {
@@ -298,9 +307,11 @@ type LeaveRequest struct {
  
 // PublicHoliday — hari libur nasional
 type PublicHoliday struct {
-	ID   int    `json:"id"`
-	Date string `json:"date"`
-	Name string `json:"name"`
+    ID          int    `json:"id"`
+    Date        string `json:"date"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    Category    string `json:"category"`
 }
  
 // LeaveSummary — statistik kartu atas UI
@@ -324,7 +335,8 @@ type UpdateLeaveQuotaRequest struct {
  
 // CreateHolidayRequest — tambah hari libur nasional
 type CreateHolidayRequest struct {
-	Date string `json:"date"` // format: "2006-01-02" contoh: "2026-08-17"
-	Name string `json:"name"`
-	Description string `json:"description"`
+    Date        string `json:"date"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    Category    string `json:"category"` // <-- Wajib ditambahkan di file model Anda
 }

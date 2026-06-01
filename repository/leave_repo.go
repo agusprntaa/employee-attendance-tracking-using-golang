@@ -127,7 +127,7 @@ func (r *LeaveRepo) GetAllRequestsByBranch(branchID, page, limit int, status str
 	return results, total, nil
 }
 
-// GetRequestByID — satu pengajuan cuti + validasi branch
+// GetRequestByID — detail satu pengajuan cuti + validasi branch
 func (r *LeaveRepo) GetRequestByID(id, branchID int) (map[string]interface{}, error) {
 	query := `
 		SELECT 
@@ -141,36 +141,39 @@ func (r *LeaveRepo) GetRequestByID(id, branchID int) (map[string]interface{}, er
 			(lr.end_date - lr.start_date + 1) AS total_days,
 			lr.reason,
 			lr.status,
-			lr.note,
-			lr.created_at
+			COALESCE(lr.note, '') AS note,
+			lr.created_at,
+			COALESCE(lr.attachment_path, '') AS attachment_path
 		FROM leave_requests lr
 		JOIN employees e ON e.id = lr.employee_id
 		LEFT JOIN divisions d ON e.division_id = d.id
 		WHERE lr.id = $1 AND e.branch_id = $2`
 
 	var (
-		leaveID      int
-		employeeID   int
-		employeeName string
-		divisionName string
-		leaveType    string
-		startDate    string
-		endDate      string
-		totalDays    int
-		reason       string
-		status       string
-		note         sql.NullString
-		createdAt    time.Time
+		leaveID        int
+		employeeID     int
+		employeeName   string
+		divisionName   string
+		leaveType      string
+		startDate      string
+		endDate        string
+		totalDays      int
+		reason         string
+		status         string
+		note           string
+		createdAt      time.Time
+		attachmentPath string
 	)
 
 	err := r.DB.QueryRow(query, id, branchID).Scan(
 		&leaveID, &employeeID, &employeeName, &divisionName, &leaveType,
-		&startDate, &endDate, &totalDays, &reason, &status, &note, &createdAt,
+		&startDate, &endDate, &totalDays, &reason, &status, &note, &createdAt, &attachmentPath,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		log.Printf("GET REQUEST BY ID ERROR: %v", err)
 		return nil, err
 	}
 
@@ -186,16 +189,22 @@ func (r *LeaveRepo) GetRequestByID(id, branchID int) (map[string]interface{}, er
 		"reason":        reason,
 		"status":        status,
 		"note":          nil,
+		"attachment":    nil,
 		"created_at":    createdAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
-	if note.Valid {
-		result["note"] = note.String
+
+	if note != "" {
+		result["note"] = note
 	}
+	if attachmentPath != "" {
+		result["attachment"] = attachmentPath
+	}
+
 	return result, nil
 }
 
 // UpdateLeaveStatus — approve / reject + otomatis update kuota
-// Aturan: hanya cuti_tahunan yang memotong kuota, sisanya bebas tanpa batas
+// Hanya "Cuti Tahunan" yang memotong kuota (sesuai format BE1)
 func (r *LeaveRepo) UpdateLeaveStatus(id int, status string, note *string) error {
 	tx, err := r.DB.Begin()
 	if err != nil {
@@ -214,8 +223,8 @@ func (r *LeaveRepo) UpdateLeaveStatus(id int, status string, note *string) error
 	}
 
 	_, err = tx.Exec(`
-		UPDATE leave_requests SET status = $1, note = $2 WHERE id = $3
-	`, status, note, id)
+    UPDATE leave_requests SET status = $1, note = $2, updated_at = NOW() WHERE id = $3
+`, status, note, id)
 	if err != nil {
 		return err
 	}
@@ -232,7 +241,8 @@ func (r *LeaveRepo) UpdateLeaveStatus(id int, status string, note *string) error
 		return int(end.Sub(start).Hours()/24) + 1, start.Year(), nil
 	}
 
-	if leaveType == "cuti_tahunan" {
+	// Hanya "Cuti Tahunan" yang memotong kuota
+	if leaveType == "Cuti Tahunan" {
 		if status == "approved" {
 			days, year, err := calcDays()
 			if err != nil {
@@ -247,6 +257,7 @@ func (r *LeaveRepo) UpdateLeaveStatus(id int, status string, note *string) error
 			}
 		}
 
+		// Reject setelah approved → kembalikan kuota
 		if status == "rejected" && currentStatus == "approved" {
 			days, year, err := calcDays()
 			if err != nil {
@@ -261,6 +272,7 @@ func (r *LeaveRepo) UpdateLeaveStatus(id int, status string, note *string) error
 			}
 		}
 	}
+	// "Cuti Sakit", "Izin Pribadi", "Cuti Melahirkan" → tidak ada perubahan kuota
 
 	return tx.Commit()
 }
@@ -329,9 +341,18 @@ func (r *LeaveRepo) UpsertQuota(employeeID, year, total int) error {
 
 // ─── PUBLIC HOLIDAYS ─────────────────────────────────────────────────────────
 
-// GetAllHolidays — semua hari libur, filter opsional by tahun
+// GetAllHolidays — semua hari libur + kolom category
+// category: "nasional" (dari pemerintah) | "khusus" (ditambah admin)
 func (r *LeaveRepo) GetAllHolidays(year int) ([]map[string]interface{}, error) {
-	query := `SELECT id, TO_CHAR(date, 'YYYY-MM-DD'), name, COALESCE(description, '') FROM public_holidays`
+	query := `
+		SELECT 
+			id, 
+			TO_CHAR(date, 'YYYY-MM-DD'), 
+			name, 
+			COALESCE(description, ''),
+			COALESCE(category, 'nasional')
+		FROM public_holidays`
+
 	args := []interface{}{}
 	if year > 0 {
 		query += ` WHERE EXTRACT(YEAR FROM date) = $1`
@@ -348,8 +369,8 @@ func (r *LeaveRepo) GetAllHolidays(year int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id int
-		var date, name, description string
-		if err := rows.Scan(&id, &date, &name, &description); err != nil {
+		var date, name, description, category string
+		if err := rows.Scan(&id, &date, &name, &description, &category); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
@@ -357,6 +378,7 @@ func (r *LeaveRepo) GetAllHolidays(year int) ([]map[string]interface{}, error) {
 			"date":        date,
 			"name":        name,
 			"description": description,
+			"category":    category, // "nasional" atau "khusus"
 		})
 	}
 	if results == nil {
@@ -365,24 +387,36 @@ func (r *LeaveRepo) GetAllHolidays(year int) ([]map[string]interface{}, error) {
 	return results, nil
 }
 
-// CreateHoliday — tambah hari libur nasional + deskripsi
-func (r *LeaveRepo) CreateHoliday(date, name, description string) (int, error) {
+// CreateHoliday — tambah hari libur + category
+// category otomatis "khusus" kalau ditambah dari admin cabang
+func (r *LeaveRepo) CreateHoliday(date, name, description, category string) (int, error) {
 	var id int
 	err := r.DB.QueryRow(`
-		INSERT INTO public_holidays (date, name, description) 
-		VALUES ($1, $2, $3) 
+		INSERT INTO public_holidays (date, name, description, category) 
+		VALUES ($1, $2, $3, $4) 
+		ON CONFLICT (date) 
+		DO UPDATE SET 
+			name        = EXCLUDED.name, 
+			description = EXCLUDED.description,
+			category    = EXCLUDED.category
 		RETURNING id
-	`, date, name, description).Scan(&id)
+	`, date, name, description, category).Scan(&id)
+
+	if err == sql.ErrNoRows {
+		err = r.DB.QueryRow(`SELECT id FROM public_holidays WHERE date = $1`, date).Scan(&id)
+	}
+
 	if err != nil {
 		log.Printf("CREATE HOLIDAY ERROR: %v", err)
 	}
 	return id, err
 }
 
-// DeleteHoliday — hapus hari libur
+// DeleteHoliday — hapus hari libur berdasarkan ID
 func (r *LeaveRepo) DeleteHoliday(id int) (bool, error) {
 	result, err := r.DB.Exec(`DELETE FROM public_holidays WHERE id = $1`, id)
 	if err != nil {
+		log.Printf("DELETE HOLIDAY ERROR: %v", err)
 		return false, err
 	}
 	rows, _ := result.RowsAffected()
@@ -391,41 +425,52 @@ func (r *LeaveRepo) DeleteHoliday(id int) (bool, error) {
 
 // ─── KALENDER ────────────────────────────────────────────────────────────────
 
-// GetCalendarDots — ambil semua titik yang tampil di kalender (hari libur + cuti approved)
+// GetCalendarDots — titik di kalender per bulan
+// FIX: cuti ditampilkan di semua hari antara start_date dan end_date
 func (r *LeaveRepo) GetCalendarDots(branchID, month, year int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 
-	// 1. Ambil hari libur di bulan & tahun tersebut
+	// 1. Ambil hari libur di bulan tersebut
 	holidayRows, err := r.DB.Query(`
-		SELECT TO_CHAR(date, 'YYYY-MM-DD'), name
+		SELECT 
+			TO_CHAR(date, 'YYYY-MM-DD'), 
+			name, 
+			COALESCE(category, 'nasional')
 		FROM public_holidays
 		WHERE EXTRACT(MONTH FROM date) = $1
 		AND EXTRACT(YEAR FROM date) = $2
 		ORDER BY date ASC
 	`, month, year)
 	if err != nil {
+		log.Printf("GET CALENDAR DOTS HOLIDAY ERROR: %v", err)
 		return nil, err
 	}
 	defer holidayRows.Close()
 
 	for holidayRows.Next() {
-		var date, name string
-		if err := holidayRows.Scan(&date, &name); err != nil {
+		var date, name, category string
+		if err := holidayRows.Scan(&date, &name, &category); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"date": date,
-			"type": "hari_libur",
-			"name": name,
+			"date":     date,
+			"type":     "hari_libur",
+			"name":     name,
+			"category": category,
 		})
 	}
 
-	// 2. Ambil tanggal yang ada karyawan cuti approved di bulan & tahun tersebut
+	// 2. Ambil semua tanggal yang ada karyawan cuti approved
+	// FIX: pakai generate_series supaya titik muncul di setiap hari cuti
 	leaveRows, err := r.DB.Query(`
 		SELECT DISTINCT TO_CHAR(d.date, 'YYYY-MM-DD')
 		FROM leave_requests lr
 		JOIN employees e ON e.id = lr.employee_id
-		JOIN generate_series(lr.start_date, lr.end_date, '1 day'::interval) AS d(date) ON true
+		JOIN generate_series(
+			lr.start_date, 
+			lr.end_date, 
+			'1 day'::interval
+		) AS d(date) ON true
 		WHERE e.branch_id = $1
 		AND lr.status = 'approved'
 		AND EXTRACT(MONTH FROM d.date) = $2
@@ -433,6 +478,7 @@ func (r *LeaveRepo) GetCalendarDots(branchID, month, year int) ([]map[string]int
 		ORDER BY 1 ASC
 	`, branchID, month, year)
 	if err != nil {
+		log.Printf("GET CALENDAR DOTS LEAVE ERROR: %v", err)
 		return nil, err
 	}
 	defer leaveRows.Close()
@@ -455,24 +501,31 @@ func (r *LeaveRepo) GetCalendarDots(branchID, month, year int) ([]map[string]int
 }
 
 // GetCalendarDetail — detail tanggal ketika diklik di kalender
+// Return: map dengan holidays dan leaves (konsisten dengan handler)
 func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]interface{}, error) {
 
-	// 1. Cek hari libur di tanggal ini
+	// 1. Ambil hari libur di tanggal ini
 	var holidays []map[string]interface{}
 	holidayRows, err := r.DB.Query(`
-		SELECT id, TO_CHAR(date, 'YYYY-MM-DD'), name, COALESCE(description, '')
+		SELECT 
+			id, 
+			TO_CHAR(date, 'YYYY-MM-DD'), 
+			name, 
+			COALESCE(description, ''),
+			COALESCE(category, 'nasional')
 		FROM public_holidays
 		WHERE date = $1
 	`, date)
 	if err != nil {
+		log.Printf("GET CALENDAR DETAIL HOLIDAY ERROR: %v", err)
 		return nil, err
 	}
 	defer holidayRows.Close()
 
 	for holidayRows.Next() {
 		var id int
-		var d, name, description string
-		if err := holidayRows.Scan(&id, &d, &name, &description); err != nil {
+		var d, name, description, category string
+		if err := holidayRows.Scan(&id, &d, &name, &description, &category); err != nil {
 			return nil, err
 		}
 		holidays = append(holidays, map[string]interface{}{
@@ -480,13 +533,14 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 			"date":        d,
 			"name":        name,
 			"description": description,
+			"category":    category,
 		})
 	}
 	if holidays == nil {
 		holidays = []map[string]interface{}{}
 	}
 
-	// 2. Cek karyawan yang cuti approved di tanggal ini
+	// 2. Ambil karyawan yang cuti approved di tanggal ini
 	var leaves []map[string]interface{}
 	leaveRows, err := r.DB.Query(`
 		SELECT 
@@ -506,6 +560,7 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 		ORDER BY e.name ASC
 	`, branchID, date)
 	if err != nil {
+		log.Printf("GET CALENDAR DETAIL LEAVE ERROR: %v", err)
 		return nil, err
 	}
 	defer leaveRows.Close()
@@ -513,7 +568,9 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 	for leaveRows.Next() {
 		var id int
 		var employeeName, divisionName, leaveType, startDate, endDate, status string
-		if err := leaveRows.Scan(&id, &employeeName, &divisionName, &leaveType, &startDate, &endDate, &status); err != nil {
+		if err := leaveRows.Scan(
+			&id, &employeeName, &divisionName, &leaveType, &startDate, &endDate, &status,
+		); err != nil {
 			return nil, err
 		}
 		leaves = append(leaves, map[string]interface{}{
@@ -535,4 +592,77 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 		"holidays": holidays,
 		"leaves":   leaves,
 	}, nil
+}
+// GetRecentActivity — ambil aktivitas terbaru seputar cuti di cabang tertentu
+// Menggabungkan 2 jenis aktivitas:
+// 1. "submitted" → karyawan baru mengajukan cuti (berdasarkan created_at)
+// 2. "approved" / "rejected" → admin sudah memproses pengajuan (berdasarkan updated_at)
+func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]interface{}, error) {
+	query := `
+		SELECT 
+			lr.id,
+			COALESCE(e.name, '') AS employee_name,
+			lr.status,
+			lr.created_at,
+			lr.updated_at
+		FROM leave_requests lr
+		JOIN employees e ON e.id = lr.employee_id
+		WHERE e.branch_id = $1
+		ORDER BY 
+			GREATEST(lr.created_at, COALESCE(lr.updated_at, lr.created_at)) DESC
+		LIMIT $2
+	`
+ 
+	rows, err := r.DB.Query(query, branchID, limit)
+	if err != nil {
+		log.Printf("GET RECENT ACTIVITY ERROR: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+ 
+	var results []map[string]interface{}
+	for rows.Next() {
+		var (
+			id           int
+			employeeName string
+			status       string
+			createdAt    time.Time
+			updatedAt    sql.NullTime
+		)
+		if err := rows.Scan(&id, &employeeName, &status, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+ 
+		// Tentukan type dan message berdasarkan status
+		activityType := "submitted"
+		message := employeeName + " submitted leave request"
+		activityTime := createdAt
+ 
+		if status == "approved" {
+			activityType = "approved"
+			message = "Admin approved leave for " + employeeName
+			if updatedAt.Valid {
+				activityTime = updatedAt.Time
+			}
+		} else if status == "rejected" {
+			activityType = "rejected"
+			message = "Admin rejected leave for " + employeeName
+			if updatedAt.Valid {
+				activityTime = updatedAt.Time
+			}
+		}
+ 
+		results = append(results, map[string]interface{}{
+			"id":            id,
+			"type":          activityType,
+			"employee_name": employeeName,
+			"message":       message,
+			"created_at":    activityTime.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+ 
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	return results, nil
 }

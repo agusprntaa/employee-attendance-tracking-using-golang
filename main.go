@@ -12,6 +12,7 @@ import (
 	"absensi_karyawan/auth"
 	"absensi_karyawan/config"
 	"absensi_karyawan/database"
+	"absensi_karyawan/leave"
 	"absensi_karyawan/router"
 
 	// BE1
@@ -49,11 +50,19 @@ func main() {
 	db := database.ConnectDB()
 
 	// =====================================================
+	// STATIC FILE SERVING
+	// Foto profil  → /uploads/photos/<filename>
+	// Attachment   → /uploads/attachments/<filename>
+	// =====================================================
+
+	app.Static("/uploads", "./uploads") // ← TAMBAHAN
+
+	// =====================================================
 	// CONFIG
 	// =====================================================
 
 	cfg := &config.Config{}
-	_ = cfg // sementara jika belum dipakai
+	_ = cfg
 
 	// =====================================================
 	// AUTH MODULE
@@ -106,6 +115,17 @@ func main() {
 	)
 
 	// =====================================================
+	// LEAVE MODULE (KARYAWAN) ← TAMBAHAN BARU
+	// =====================================================
+
+	leaveRepo := &leave.Repository{DB: db}
+	leaveService := &leave.Service{Repo: leaveRepo}
+	leaveHandler := &leave.Handler{Service: leaveService}
+
+	// Jalankan cron job reset kuota tiap 1 Januari jam 00:01 WITA
+	leave.StartCronJob(leaveRepo)
+
+	// =====================================================
 	// BE2 REPOSITORIES (ADMIN PANEL)
 	// =====================================================
 
@@ -122,7 +142,7 @@ func main() {
 	qrRepo := repository.NewQRRepo(db)
 
 	// ─── LEAVE REPOSITORY (BARU) ──────────────────────
-	leaveRepo := repository.NewLeaveRepo(db)
+	leaveAdminRepo := repository.NewLeaveRepo(db)
 
 	// =====================================================
 	// BE2 HANDLERS (ADMIN PANEL)
@@ -160,7 +180,7 @@ func main() {
 	)
 
 	// ─── LEAVE HANDLER (BARU) ─────────────────────────
-	leaveH := handlers.NewLeaveHandler(leaveRepo)
+	leaveH := handlers.NewLeaveHandler(leaveAdminRepo)
 
 	// =====================================================
 	// LIMITER
@@ -201,7 +221,8 @@ func main() {
 	// Semua role yang sudah login bisa akses
 	// =====================================================
 
-	// Employee
+	// ── Employee ─────────────────────────────────────────
+
 	api.Get(
 		"/employee/profile",
 		employeeHandler.GetProfile,
@@ -217,7 +238,18 @@ func main() {
 		employeeHandler.UpdateProfile,
 	)
 
-	// Attendance
+	api.Post(
+		"/employee/profile/photo",
+		employeeHandler.UploadPhoto,
+	)
+
+	api.Delete(
+		"/employee/profile/photo",
+		employeeHandler.DeletePhoto,
+	)
+
+	// ── Attendance ───────────────────────────────────────
+
 	api.Post(
 		"/attendance/checkin",
 		attendanceHandler.CheckIn,
@@ -238,14 +270,52 @@ func main() {
 		attendanceHandler.GetHistory,
 	)
 
-	api.Post(
-		"/employee/profile/photo",
-		employeeHandler.UploadPhoto,
+	// ── Leave (Cuti) ─────────────────────────────────────
+	// TAMBAHAN: 6 endpoint baru untuk modul cuti karyawan
+
+	api.Get(
+		"/employee/leave/types",
+		leaveHandler.GetLeaveTypes,
 	)
 
-	api.Delete(
-		"/employee/profile/photo",
-		employeeHandler.DeletePhoto,
+	api.Get(
+		"/employee/leave/quota",
+		leaveHandler.GetMyQuota,
+	)
+
+	api.Post(
+		"/employee/leave/request",
+		leaveHandler.RequestLeave,
+	)
+
+	api.Get(
+		"/employee/leave/history",
+		leaveHandler.GetMyHistory,
+	)
+
+	api.Patch(
+		"/employee/leave/:id/cancel",
+		leaveHandler.CancelLeave,
+	)
+
+	api.Get(
+		"/employee/leave/holidays",
+		leaveHandler.GetHolidays,
+	)
+
+	api.Get(
+		"/employee/leave/notifications",
+		leaveHandler.GetNotifications,
+	)
+
+	api.Patch(
+		"/employee/leave/notifications/read-all",
+		leaveHandler.MarkAllNotificationsRead,
+	)
+
+	api.Patch(
+		"/employee/leave/notifications/:id/read",
+		leaveHandler.MarkNotificationRead,
 	)
 
 	// =====================================================
@@ -441,6 +511,12 @@ func main() {
 		leaveH.DeleteHoliday,
 	)
 
+	// Recent Activity
+	admin.Get(
+    "/leave/recent-activity",
+    leaveH.GetRecentActivity,
+	)
+
 	// =====================================================
 	// QR ROUTES
 	// HANYA admin_cabang
@@ -476,7 +552,6 @@ func main() {
 		"/create-admin",
 		authHandler.CreateUser,
 	)
-
 
 	router.SetupGlobalAdminRoutes(app, db)
 

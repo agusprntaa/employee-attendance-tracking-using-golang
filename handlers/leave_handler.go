@@ -210,12 +210,16 @@ func (h *LeaveHandler) GetAllHolidays(c *fiber.Ctx) error {
 // POST /admin-cabang/holidays
 // Body: { "name": "Hari Kemerdekaan", "date": "2026-08-17", "description": "opsional" }
 
+// ─── TAMBAHAN HARI LIBUR ────────────────────────────────────────────────────────
+// POST /admin-cabang/holidays
+
 func (h *LeaveHandler) CreateHoliday(c *fiber.Ctx) error {
 	claims := auth.GetClaims(c)
 	if claims == nil || claims.BranchID == nil {
 		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
 
+	// Sesuai dengan UI Anda, struct ini hanya menangkap 3 data dari FE
 	var req models.CreateHolidayRequest
 	if err := c.BodyParser(&req); err != nil {
 		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
@@ -235,7 +239,11 @@ func (h *LeaveHandler) CreateHoliday(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "INVALID_DATE", "Format tanggal harus YYYY-MM-DD, contoh: 2026-08-17")
 	}
 
-	id, err := h.leaveRepo.CreateHoliday(req.Date, req.Name, req.Description)
+	// STRATEGI BACKEND: Karena UI tidak mengirim kategori, kita kunci/set otomatis di sini!
+	categoryOtomatis := "khusus"
+
+	// Oper variabel 'categoryOtomatis' ke repository
+	id, err := h.leaveRepo.CreateHoliday(req.Date, req.Name, req.Description, categoryOtomatis)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			return utils.BadRequest(c, "DATE_DUPLICATE", "Tanggal ini sudah terdaftar sebagai hari libur")
@@ -248,6 +256,7 @@ func (h *LeaveHandler) CreateHoliday(c *fiber.Ctx) error {
 		"date":        req.Date,
 		"name":        req.Name,
 		"description": req.Description,
+		"category":    categoryOtomatis, // Beritahu FE kalau ini sukses masuk sebagai kategori khusus
 	})
 }
 
@@ -350,6 +359,30 @@ func (h *LeaveHandler) GetRequestByID(c *fiber.Ctx) error {
 	}
 	if data == nil {
 		return utils.NotFound(c, "Pengajuan cuti tidak ditemukan")
+	}
+ 
+	return utils.Success(c, data)
+}
+// GetRecentActivity — aktivitas terbaru seputar cuti
+// GET /admin-cabang/leave/recent-activity
+// Query param opsional: limit (default 10)
+// Dipakai FE untuk tampilkan panel "Recent Activity" di dashboard cuti
+ 
+func (h *LeaveHandler) GetRecentActivity(c *fiber.Ctx) error {
+	claims := auth.GetClaims(c)
+	if claims == nil || claims.BranchID == nil {
+		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
+	}
+ 
+	// Default 10 aktivitas terbaru, maksimal 50
+	limit := c.QueryInt("limit", 10)
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+ 
+	data, err := h.leaveRepo.GetRecentActivity(*claims.BranchID, limit)
+	if err != nil {
+		return utils.InternalError(c, "Gagal mengambil aktivitas terbaru")
 	}
  
 	return utils.Success(c, data)
