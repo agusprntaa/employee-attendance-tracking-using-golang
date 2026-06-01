@@ -276,3 +276,67 @@ type ScheduleResponse struct {
 	EndDate   string             `json:"end_date"`
 	Schedules []EmployeeSchedule `json:"schedules"`
 }
+
+//─── LEAVE (CUTI) ────────────────────────────────────────────────────────────
+ 
+// LeaveQuota — kuota cuti karyawan per tahun
+type LeaveQuota struct {
+	ID         int `json:"id"`
+	EmployeeID int `json:"employee_id"`
+	Year       int `json:"year"`
+	Total      int `json:"total"`
+	Used       int `json:"used"`
+	Remaining  int `json:"remaining"` // computed: total - used
+}
+ 
+// LeaveRequest — pengajuan cuti karyawan
+type LeaveRequest struct {
+	ID           int     `json:"id"`
+	EmployeeID   int     `json:"employee_id"`
+	EmployeeName string  `json:"employee_name,omitempty"`
+	DivisionName string  `json:"division_name,omitempty"`
+	LeaveType    string  `json:"leave_type"` // cuti_tahunan | cuti_sakit | cuti_pribadi | cuti_melahirkan
+	StartDate    string  `json:"start_date"`
+	EndDate      string  `json:"end_date"`
+	TotalDays    int     `json:"total_days,omitempty"`
+	Reason       string  `json:"reason"`
+	Status       string  `json:"status"` // pending | approved | rejected
+	Note         *string `json:"note,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+}
+ 
+// PublicHoliday — hari libur nasional
+type PublicHoliday struct {
+    ID          int    `json:"id"`
+    Date        string `json:"date"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    Category    string `json:"category"`
+}
+ 
+// LeaveSummary — statistik kartu atas UI
+type LeaveSummary struct {
+	TotalRequests int `json:"total_requests"`
+	Pending       int `json:"pending"`
+	Approved      int `json:"approved"`
+	Rejected      int `json:"rejected"`
+}
+ 
+// UpdateLeaveStatusRequest — untuk approve/reject pengajuan cuti
+type UpdateLeaveStatusRequest struct {
+	Status string  `json:"status"` // "approved" atau "rejected"
+	Note   *string `json:"note"`   // opsional, catatan admin
+}
+ 
+// UpdateLeaveQuotaRequest — set kuota manual oleh admin
+type UpdateLeaveQuotaRequest struct {
+	Total int `json:"total"`
+}
+ 
+// CreateHolidayRequest — tambah hari libur nasional
+type CreateHolidayRequest struct {
+    Date        string `json:"date"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    Category    string `json:"category"` // <-- Wajib ditambahkan di file model Anda
+}

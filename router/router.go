@@ -31,6 +31,9 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	settingsRepo := repository.NewSettingsRepo(db)
 	qrRepo := repository.NewQRRepo(db)
 
+	// TAMBAHAN LEAVE REPOSITORY
+	leaveRepo := repository.NewLeaveRepo(db)
+
 	// ─── Handlers ──────────────────────────────────────────────────────────────
 	dashboardH := handlers.NewDashboardHandler(attendanceRepo)
 	employeeH := handlers.NewEmployeeHandler(empRepo, authRepo)
@@ -39,13 +42,19 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	divisionH := handlers.NewDivisionHandler(divRepo, empRepo, attendanceRepo)
 	settingsH := handlers.NewSettingsHandler(settingsRepo)
 	qrH := handlers.NewQRHandler(qrRepo)
-	
+
+	// TAMBAHAN LEAVE HANDLER
+	leaveH := handlers.NewLeaveHandler(leaveRepo)
 
 	// ─── Health Check (public) ─────────────────────────────────────────────────
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "success", "data": fiber.Map{
-			"status": "ok", "service": "backend2-admin-cabang",
-		}})
+		return c.JSON(fiber.Map{
+			"status": "success",
+			"data": fiber.Map{
+				"status":  "ok",
+				"service": "backend2-admin-cabang",
+			},
+		})
 	})
 
 	app.Get("/tes-route", func(c *fiber.Ctx) error {
@@ -54,7 +63,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 
 	// ─── Protected Routes (wajib token + role admin) ───────────────────────────
 	admin := app.Group("/admin-cabang", auth.AuthMiddleware, auth.RequireAdmin)
-	
+
 	// Dashboard
 	admin.Get("/dashboard", dashboardH.GetDashboard)
 
@@ -96,5 +105,26 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	admin.Patch("/divisions/:id", divisionH.Update)
 	admin.Delete("/divisions/:id", divisionH.Delete)
 
+	// ─── LEAVE MANAGEMENT ──────────────────────────────────────────────────────
+
+	// Leave Summary
+	admin.Get("/leave/summary", leaveH.GetSummary)
+
+	// Leave Requests
+	admin.Get("/leave/requests", leaveH.GetAllRequests)
+	admin.Patch("/leave/:id/status", leaveH.UpdateLeaveStatus)
+
+	// Leave Quota
+	admin.Get("/leave/quota/:employee_id", leaveH.GetLeaveQuota)
+	admin.Patch("/leave/quota/:employee_id", leaveH.UpdateLeaveQuota)
+
+	// Kalender
+	admin.Get("/leave/calendar", leaveH.GetCalendarDots)
+	admin.Get("/leave/calendar/detail", leaveH.GetCalendarDetail)
+
+	// Holidays
+	admin.Get("/holidays", leaveH.GetAllHolidays)
+	admin.Post("/holidays", leaveH.CreateHoliday)
+	admin.Delete("/holidays/:id", leaveH.DeleteHoliday)
 	return app
 }

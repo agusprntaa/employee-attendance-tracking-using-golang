@@ -168,6 +168,9 @@ func main() {
 
 	qrRepo := repository.NewQRRepo(db)
 
+	// ─── LEAVE REPOSITORY (BARU) ──────────────────────
+	leaveAdminRepo := repository.NewLeaveRepo(db)
+
 	// =====================================================
 	// BE2 HANDLERS (ADMIN PANEL)
 	// =====================================================
@@ -202,6 +205,9 @@ func main() {
 	qrH := handlers.NewQRHandler(
 		qrRepo,
 	)
+
+	// ─── LEAVE HANDLER (BARU) ─────────────────────────
+	leaveH := handlers.NewLeaveHandler(leaveAdminRepo)
 
 	// =====================================================
 	// LIMITER
@@ -319,6 +325,7 @@ func main() {
 	)
 
 	// ── Leave (Cuti) ─────────────────────────────────────
+	// TAMBAHAN: 6 endpoint baru untuk modul cuti karyawan
 
 	api.Get(
 		"/employee/leave/types",
@@ -486,6 +493,82 @@ func main() {
 	admin.Get(
 		"/schedules",
 		divisionH.GetSchedules,
+	)
+
+	// =====================================================
+	// LEAVE MANAGEMENT (CUTI) — BARU
+	// =====================================================
+
+	// Ringkasan statistik kartu atas UI
+	admin.Get(
+		"/leave/summary",
+		leaveH.GetSummary,
+	)
+
+	// List pengajuan cuti
+	admin.Get(
+		"/leave/requests",
+		leaveH.GetAllRequests,
+	)
+
+	// Detail pengajuan cuti by ID (untuk modal detail di FE)
+	admin.Get(
+		"/leave/requests/:id",
+		leaveH.GetRequestByID,
+	)
+
+	// Approve / Reject pengajuan cuti
+	admin.Patch(
+		"/leave/:id/status",
+		leaveH.UpdateLeaveStatus,
+	)
+
+	// Lihat kuota cuti karyawan
+	admin.Get(
+		"/leave/quota/:employee_id",
+		leaveH.GetLeaveQuota,
+	)
+
+	// Set kuota manual
+	admin.Patch(
+		"/leave/quota/:employee_id",
+		leaveH.UpdateLeaveQuota,
+	)
+
+	// Kalender — titik per tanggal
+	admin.Get(
+		"/leave/calendar",
+		leaveH.GetCalendarDots,
+	)
+
+	// Kalender — detail tanggal diklik
+	admin.Get(
+		"/leave/calendar/detail",
+		leaveH.GetCalendarDetail,
+	)
+
+	// Hari libur — lihat semua
+	admin.Get(
+		"/holidays",
+		leaveH.GetAllHolidays,
+	)
+
+	// Hari libur — tambah
+	admin.Post(
+		"/holidays",
+		leaveH.CreateHoliday,
+	)
+
+	// Hari libur — hapus
+	admin.Delete(
+		"/holidays/:id",
+		leaveH.DeleteHoliday,
+	)
+
+	// Recent Activity
+	admin.Get(
+		"/leave/recent-activity",
+		leaveH.GetRecentActivity,
 	)
 
 	// =====================================================
