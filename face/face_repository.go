@@ -19,6 +19,10 @@ type FaceToken struct {
 	Token      string
 	ExpiresAt  time.Time
 	IsUsed     bool
+
+	FaceVerified    bool
+	ConfidenceScore float64
+	VerifiedAt      *time.Time
 }
 
 // ─────────────────────────────────────────
@@ -32,32 +36,25 @@ type FaceToken struct {
 // GetFaceReference — ambil path foto referensi dan status pendaftaran
 // Return: path string, registered bool, err
 // path kosong ("") berarti belum daftar wajah
+// Hanya ambil apa yang face module butuhkan
 func (r *Repository) GetFaceReference(employeeID int) (path string, registered bool, err error) {
 	var nullPath sql.NullString
 	err = r.DB.QueryRow(`
-		SELECT
-			COALESCE(face_reference_path, ''),
-			COALESCE(face_registered, false)
-		FROM employees
-		WHERE id = $1
-	`, employeeID).Scan(&nullPath, &registered)
-	if nullPath.Valid {
-		path = nullPath.String
-	}
+        SELECT COALESCE(face_reference_path, ''), COALESCE(face_registered, false)
+        FROM employees WHERE id = $1
+    `, employeeID).Scan(&nullPath, &registered)
+	path = nullPath.String
 	return
 }
 
-// UpdateFaceReference — simpan path foto + tandai face_registered = true
-// Dipanggil setelah foto berhasil disimpan ke disk
 func (r *Repository) UpdateFaceReference(employeeID int, path string) error {
 	_, err := r.DB.Exec(`
-		UPDATE employees
-		SET
-			face_reference_path = $1,
-			face_registered     = true,
-			face_registered_at  = NOW()
-		WHERE id = $2
-	`, path, employeeID)
+        UPDATE employees
+        SET face_reference_path = $1,
+            face_registered     = true,
+            face_registered_at  = NOW()
+        WHERE id = $2
+    `, path, employeeID)
 	return err
 }
 
@@ -78,20 +75,42 @@ func (r *Repository) InsertFaceToken(employeeID int, token string) error {
 // GetFaceToken — ambil token, validasi dilakukan di service
 // Return nil jika token tidak ditemukan
 func (r *Repository) GetFaceToken(token string, employeeID int) (*FaceToken, error) {
+
 	var ft FaceToken
+
 	err := r.DB.QueryRow(`
-		SELECT id, employee_id, token, expires_at, is_used
+		SELECT
+			id,
+			employee_id,
+			token,
+			expires_at,
+			is_used,
+			face_verified,
+			COALESCE(confidence_score,0)
 		FROM face_tokens
-		WHERE token = $1 AND employee_id = $2
-	`, token, employeeID).Scan(
-		&ft.ID, &ft.EmployeeID, &ft.Token, &ft.ExpiresAt, &ft.IsUsed,
+		WHERE token = $1
+		AND employee_id = $2
+	`,
+		token,
+		employeeID,
+	).Scan(
+		&ft.ID,
+		&ft.EmployeeID,
+		&ft.Token,
+		&ft.ExpiresAt,
+		&ft.IsUsed,
+		&ft.FaceVerified,
+		&ft.ConfidenceScore,
 	)
+
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return &ft, nil
 }
 
@@ -162,8 +181,8 @@ func (r *Repository) InsertAttendanceWithFace(
 ) (int, error) {
 	var id int
 	err := tx.QueryRow(`
-		INSERT INTO attendances
-			(employee_id, date, checkin_time, face_verified, confidence_score)
+		INSERT INTO attendance
+			(employee_id, date, check_in, face_verified, confidence_score)
 		VALUES ($1, CURRENT_DATE, NOW(), true, $2)
 		RETURNING id
 	`, employeeID, score).Scan(&id)
@@ -175,8 +194,71 @@ func (r *Repository) InsertAttendanceWithFace(
 func (r *Repository) HasCheckedInToday(employeeID int) (bool, error) {
 	var count int
 	err := r.DB.QueryRow(`
-		SELECT COUNT(*) FROM attendances
+		SELECT COUNT(*) FROM attendance
 		WHERE employee_id = $1 AND date = CURRENT_DATE
 	`, employeeID).Scan(&count)
 	return count > 0, err
+}
+
+func (r *Repository) MarkFaceVerified(
+	tokenID int,
+	score float64,
+) error {
+
+	_, err := r.DB.Exec(`
+		UPDATE face_tokens
+		SET
+			face_verified = TRUE,
+			confidence_score = $2,
+			verified_at = NOW()
+		WHERE id = $1
+	`,
+		tokenID,
+		score,
+	)
+
+	return err
+}
+
+func (r *Repository) IsFaceVerified(
+	employeeID int,
+	token string,
+) (bool, error) {
+
+	var verified bool
+
+	err := r.DB.QueryRow(`
+		SELECT face_verified
+FROM face_tokens
+WHERE employee_id = $1
+AND token = $2
+AND expires_at > NOW()
+AND is_used = false
+AND face_verified = true
+	`, employeeID, token).Scan(
+		&verified,
+	)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return verified, nil
+}
+
+func (r *Repository) ConsumeFaceToken(
+	token string,
+) error {
+
+	_, err := r.DB.Exec(`
+		UPDATE face_tokens
+		SET is_used = true
+		WHERE token = $1
+	`, token)
+
+	return err
 }

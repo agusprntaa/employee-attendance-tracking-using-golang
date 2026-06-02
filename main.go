@@ -59,11 +59,8 @@ func main() {
 	}
 
 	faceEngine := face.NewInsightFaceEngine(
-		"http://localhost:3000",
+		"http://localhost:8001",
 	)
-
-	// alternatif AWS:
-	// faceEngine := face.NewAWSEngine("ap-southeast-1")
 
 	faceService := &face.Service{
 		Repo:      faceRepo,
@@ -298,8 +295,8 @@ func main() {
 	)
 
 	api.Post(
-		"/attendance/checkin-verify",
-		faceHandler.VerifyAndCheckin,
+		"/attendance/verify-face",
+		faceHandler.VerifyFace,
 	)
 
 	// ── Attendance ───────────────────────────────────────

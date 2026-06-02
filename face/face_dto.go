@@ -63,7 +63,7 @@ type CheckinVerifyResponse struct {
 	AttendanceID    int     `json:"attendance_id"`
 	EmployeeID      int     `json:"employee_id"`
 	Date            string  `json:"date"`
-	CheckinTime     string  `json:"checkin_time"`
+	CheckinTime     string  `json:"check_in"`
 	FaceVerified    bool    `json:"face_verified"`
 	ConfidenceScore float64 `json:"confidence_score"`
 }

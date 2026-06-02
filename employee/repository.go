@@ -264,3 +264,24 @@ func (r *Repository) GetEmployeeList(branchID int, search string, page, limit in
 
 	return employees, total, nil
 }
+
+// di employee/repository.go — tambah fungsi ini
+func (r *Repository) GetOnboardingFlags(employeeID int) (mustChange, faceRegistered, profileCompleted bool, err error) {
+	err = r.DB.QueryRow(`
+        SELECT
+            COALESCE(must_change_password, false),
+            COALESCE(face_registered, false),
+            COALESCE(profile_completed, false)
+        FROM employees
+        WHERE id = $1
+    `, employeeID).Scan(&mustChange, &faceRegistered, &profileCompleted)
+	return
+}
+
+// employee/repository.go
+func (r *Repository) MarkProfileCompleted(employeeID int) error {
+	_, err := r.DB.Exec(`
+        UPDATE employees SET profile_completed = true WHERE id = $1
+    `, employeeID)
+	return err
+}

@@ -1,6 +1,7 @@
 package face
 
 import (
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -165,6 +166,7 @@ func (h *Handler) GenerateFaceToken(c *fiber.Ctx) error {
 			"status":  "error",
 			"code":    code,
 			"message": msg,
+			"detail":  err.Error(), // detail error asli untuk debugging, bisa dihapus di production
 		})
 	}
 
@@ -234,6 +236,9 @@ func (h *Handler) VerifyAndCheckin(c *fiber.Ctx) error {
 
 	result, err := h.Service.VerifyAndCheckin(employeeID, faceToken, fileHeader, c.IP())
 	if err != nil {
+
+		log.Printf("VERIFY ERROR: %+v\n", err)
+
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
 			"status":  "error",
@@ -246,5 +251,43 @@ func (h *Handler) VerifyAndCheckin(c *fiber.Ctx) error {
 		"status":  "success",
 		"message": "Checkin berhasil",
 		"data":    result,
+	})
+}
+
+func (h *Handler) VerifyFace(c *fiber.Ctx) error {
+
+	employeeID := c.Locals("user_id").(int)
+
+	faceToken := c.FormValue("face_token")
+
+	fileHeader, err := c.FormFile("face_image")
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"status":  "error",
+			"message": "face_image wajib diisi",
+		})
+	}
+
+	err = h.Service.VerifyFace(
+		employeeID,
+		faceToken,
+		fileHeader,
+		c.IP(),
+	)
+
+	if err != nil {
+
+		status, code, msg := errorMessage(err)
+
+		return c.Status(status).JSON(fiber.Map{
+			"status":  "error",
+			"code":    code,
+			"message": msg,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":  "success",
+		"message": "Face verified",
 	})
 }

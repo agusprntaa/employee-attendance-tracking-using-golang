@@ -302,53 +302,42 @@ func (s *Service) VerifyAndCheckin(
 
 	// 6a. MISMATCH
 	if score < threshold {
-		// Log gagal tanpa transaksi — tidak ada attendance yang dibuat
-		_ = s.Repo.InsertVerificationLog(nil, employeeID, 0, "mismatch", score, ipAddress)
+
+		_ = s.Repo.InsertVerificationLog(
+			nil,
+			employeeID,
+			0,
+			"mismatch",
+			score,
+			ipAddress,
+		)
+
 		return nil, ErrFaceMismatch
 	}
 
-	// 6b. MATCH — semua operasi dalam satu transaksi
-	tx, err := s.DB.Begin()
+	// 6b. MATCH
+
+	err = s.Repo.MarkFaceVerified(
+		ft.ID,
+		score,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("gagal mulai transaksi: %w", err)
+		return nil, err
 	}
 
-	var txErr error
-	defer func() {
-		if txErr != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// INSERT attendance
-	attendanceID, txErr := s.Repo.InsertAttendanceWithFace(tx, employeeID, score)
-	if txErr != nil {
-		return nil, fmt.Errorf("gagal simpan attendance: %w", txErr)
-	}
-
-	// Invalidate token — tidak bisa dipakai lagi
-	txErr = s.Repo.MarkTokenUsed(tx, ft.ID)
-	if txErr != nil {
-		return nil, fmt.Errorf("gagal invalidate token: %w", txErr)
-	}
-
-	// Log sukses dalam transaksi yang sama
-	txErr = s.Repo.InsertVerificationLog(tx, employeeID, attendanceID, "match", score, ipAddress)
-	if txErr != nil {
-		return nil, fmt.Errorf("gagal simpan log: %w", txErr)
-	}
-
-	// Commit semua
-	txErr = tx.Commit()
-	if txErr != nil {
-		return nil, fmt.Errorf("gagal commit: %w", txErr)
-	}
+	_ = s.Repo.InsertVerificationLog(
+		nil,
+		employeeID,
+		0,
+		"match",
+		score,
+		ipAddress,
+	)
 
 	return &CheckinVerifyResponse{
-		AttendanceID:    attendanceID,
-		EmployeeID:      employeeID,
-		Date:            time.Now().Format("2006-01-02"),
-		CheckinTime:     time.Now().Format("15:04:05"),
+		EmployeeID: employeeID,
+		Date:       time.Now().Format("2006-01-02"),
+
 		FaceVerified:    true,
 		ConfidenceScore: score,
 	}, nil
@@ -383,4 +372,85 @@ func (s *Service) GetOnboardingStatus(
 	}
 
 	return &res, nil
+}
+
+func (s *Service) VerifyFace(
+	employeeID int,
+	faceToken string,
+	fileHeader *multipart.FileHeader,
+	ipAddress string,
+) error {
+
+	ft, err := s.Repo.GetFaceToken(
+		faceToken,
+		employeeID,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if ft == nil {
+		return ErrTokenInvalid
+	}
+
+	if ft.IsUsed {
+		return ErrTokenUsed
+	}
+
+	if time.Now().After(ft.ExpiresAt) {
+		return ErrTokenExpired
+	}
+
+	referencePath, registered, err :=
+		s.Repo.GetFaceReference(employeeID)
+
+	if err != nil {
+		return err
+	}
+
+	if !registered {
+		return ErrFaceNotRegistered
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	imageBytes := make([]byte, fileHeader.Size)
+
+	_, err = file.Read(imageBytes)
+	if err != nil {
+		return err
+	}
+
+	score, err := s.Engine.Compare(
+		imageBytes,
+		referencePath,
+	)
+
+	if err != nil {
+		return ErrEngineError
+	}
+
+	if score < s.Threshold {
+
+		_ = s.Repo.InsertVerificationLog(
+			nil,
+			employeeID,
+			0,
+			"mismatch",
+			score,
+			ipAddress,
+		)
+
+		return ErrFaceMismatch
+	}
+
+	return s.Repo.MarkFaceVerified(
+		ft.ID,
+		score,
+	)
 }

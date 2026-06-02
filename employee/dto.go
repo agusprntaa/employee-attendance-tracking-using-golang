@@ -1,5 +1,7 @@
 package employee
 
+import "github.com/gofiber/fiber/v2"
+
 // ─────────────────────────────────────────
 // REQUEST DTO
 // (data dari client ke backend)
@@ -61,4 +63,26 @@ type ProfileResponse struct {
 	Phone        string `json:"phone"`
 	Address      string `json:"address"`
 	BirthDate    string `json:"birth_date"`
+}
+
+// di employee/handler.go — tambah handler ini
+func (h *Handler) GetOnboardingStatus(c *fiber.Ctx) error {
+	employeeID := c.Locals("user_id").(int)
+
+	mustChange, faceRegistered, profileCompleted, err := h.Repo.GetOnboardingFlags(employeeID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"status":  "error",
+			"message": "Gagal mengambil status onboarding",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status": "success",
+		"data": fiber.Map{
+			"must_change_password": mustChange,
+			"face_registered":      faceRegistered,
+			"profile_completed":    profileCompleted,
+		},
+	})
 }
