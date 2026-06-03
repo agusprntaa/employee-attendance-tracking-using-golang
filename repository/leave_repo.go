@@ -599,20 +599,23 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 // 2. "approved" / "rejected" → admin sudah memproses pengajuan (berdasarkan updated_at)
 func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
-			lr.id,
-			COALESCE(e.name, '') AS employee_name,
-			lr.status,
-			lr.created_at,
-			lr.updated_at
-		FROM leave_requests lr
-		JOIN employees e ON e.id = lr.employee_id
-		WHERE e.branch_id = $1
-		ORDER BY 
-			GREATEST(lr.created_at, COALESCE(lr.updated_at, lr.created_at)) DESC
-		LIMIT $2
-	`
- 
+    SELECT 
+        lr.id,
+        COALESCE(e.name, '') AS employee_name,
+        lr.status,
+        lr.created_at,
+        lr.updated_at
+    FROM leave_requests lr
+    JOIN employees e ON e.id = lr.employee_id
+    WHERE e.branch_id = $1
+    AND (
+        DATE(lr.created_at) = CURRENT_DATE
+        OR DATE(lr.updated_at) = CURRENT_DATE
+    )
+    ORDER BY 
+        GREATEST(lr.created_at, COALESCE(lr.updated_at, lr.created_at)) DESC
+    LIMIT $2
+`
 	rows, err := r.DB.Query(query, branchID, limit)
 	if err != nil {
 		log.Printf("GET RECENT ACTIVITY ERROR: %v", err)

@@ -374,11 +374,11 @@ func (h *LeaveHandler) GetRecentActivity(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
  
-	// Default 10 aktivitas terbaru, maksimal 50
-	limit := c.QueryInt("limit", 10)
-	if limit < 1 || limit > 50 {
-		limit = 10
-	}
+	// Default 6 aktivitas terbaru, maksimal 6
+	limit := c.QueryInt("limit", 6)
+	if limit < 1 || limit > 6 {
+    limit = 6
+}
  
 	data, err := h.leaveRepo.GetRecentActivity(*claims.BranchID, limit)
 	if err != nil {
