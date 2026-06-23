@@ -12,7 +12,6 @@ import (
 	"absensi_karyawan/auth"
 	"absensi_karyawan/config"
 	"absensi_karyawan/database"
-	"absensi_karyawan/face"
 	"absensi_karyawan/leave"
 	"absensi_karyawan/router"
 
@@ -54,24 +53,7 @@ func main() {
 	// FACE MODULE
 	// =====================================================
 
-	faceRepo := &face.Repository{
-		DB: db,
-	}
 
-	faceEngine := face.NewInsightFaceEngine(
-		"http://localhost:8001",
-	)
-
-	faceService := &face.Service{
-		Repo:      faceRepo,
-		Engine:    faceEngine,
-		DB:        db,
-		Threshold: 0.80,
-	}
-
-	faceHandler := &face.Handler{
-		Service: faceService,
-	}
 
 	// =====================================================
 	// STATIC FILE SERVING
@@ -271,34 +253,6 @@ func main() {
 		"/employee/profile/photo",
 		employeeHandler.DeletePhoto,
 	)
-
-	// ── Face / Onboarding ────────────────────────────
-
-	api.Get(
-		"/employee/onboarding-status",
-		faceHandler.GetOnboardingStatus,
-	)
-
-	api.Get(
-		"/employee/face/status",
-		faceHandler.GetFaceStatus,
-	)
-
-	api.Post(
-		"/employee/face/register",
-		faceHandler.RegisterFace,
-	)
-
-	api.Post(
-		"/attendance/face-token",
-		faceHandler.GenerateFaceToken,
-	)
-
-	api.Post(
-		"/attendance/verify-face",
-		faceHandler.VerifyFace,
-	)
-
 	// ── Attendance ───────────────────────────────────────
 
 	api.Post(

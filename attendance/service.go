@@ -1,7 +1,6 @@
 package attendance
 
 import (
-	"absensi_karyawan/face"
 	"absensi_karyawan/utils"
 	"database/sql"
 	"errors"
@@ -13,7 +12,7 @@ import (
 
 type Service struct {
 	Repo     *Repository
-	FaceRepo *face.Repository
+	
 }
 
 var (
@@ -120,19 +119,6 @@ func (s *Service) CheckIn(
 	employeeID int,
 	req CheckInRequest,
 ) (*AttendanceRecord, error) {
-
-	verified, err := s.FaceRepo.IsFaceVerified(
-		employeeID,
-		req.FaceToken,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if !verified {
-		return nil, errors.New("FACE_NOT_VERIFIED")
-	}
 
 	if req.WorkType == "WFA" {
 		return s.checkInWFA(employeeID, req)
@@ -249,9 +235,7 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 	if err := s.Repo.InsertAttendance(record); err != nil {
 		return nil, err
 	}
-	_ = s.FaceRepo.ConsumeFaceToken(
-		req.FaceToken,
-	)
+	
 	return record, nil
 }
 
