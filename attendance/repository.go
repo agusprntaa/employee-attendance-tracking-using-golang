@@ -273,3 +273,55 @@ func (r *Repository) GetAttendanceHistory(employeeID, limit, offset int) ([]*Att
 
 	return records, total, nil
 }
+
+// ─────────────────────────────────────────
+// EVENT QUERIES — untuk mekanisme QR event
+// ─────────────────────────────────────────
+
+type EventRow struct {
+	ID   int
+	Name string
+}
+
+func (r *Repository) GetEventByQR(qrCode string) (*EventRow, error) {
+	var ev EventRow
+	err := r.DB.QueryRow(`
+		SELECT id, name FROM events
+		WHERE qr_code = $1 AND expired_at > NOW()
+	`, qrCode).Scan(&ev.ID, &ev.Name)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &ev, err
+}
+
+func (r *Repository) IsEmployeeInvitedToEvent(employeeID, eventID int) (bool, error) {
+	var count int
+	err := r.DB.QueryRow(`
+		SELECT COUNT(*) FROM event_participants
+		WHERE employee_id = $1 AND employee_id = $2
+		`, eventID, employeeID).Scan(&count)
+	return count > 0, err
+}
+
+func (r *Repository) HasCheckedInToEvent(employeeID, eventID int) (bool, error) {
+	var count int
+	err := r.DB.QueryRow(`
+		SELECT COUNT(*) FROM event_attendance
+		WHERE employee_id = $1 AND event_id = $2 AND date = CURRENT_DATE
+	`, employeeID, eventID).Scan(&count)
+	return count > 0, err
+}
+
+func (r *Repository) InsertAttendanceQREvent(employeeID, eventID int, confidenceScore float64) error {
+	today := utils.TodayDate()
+	now := utils.NowWITA()
+	_, err := r.DB.Exec(`
+		INSERT INTO attendance
+            (employee_id, date, work_type, status,
+             check_in, face_verified, confidence_score,
+             checkin_type, event_id)
+        VALUES ($1,$2,'WFO','ON_TIME',$3,true,$4,'qr_event',$5)
+    `, employeeID, today, now, confidenceScore, eventID)
+	return err
+}

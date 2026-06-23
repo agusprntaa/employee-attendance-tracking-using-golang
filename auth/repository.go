@@ -51,32 +51,45 @@ func (r *Repository) FindUser(username string) (*User, string, error) {
 // ============================================================
 
 func (r *Repository) FindUserWithPasswordFlag(username string) (*User, string, bool, error) {
+
 	var user User
 	var hashed string
 	var mustChange bool
-	var branchID sql.NullInt64 // ← handle NULL
 
 	err := r.DB.QueryRow(`
-		SELECT id, name, username, role, tipe, branch_id, password,
-		       COALESCE(must_change_password, false)
-		FROM employees
-		WHERE username = $1
-	`, username).Scan(
+SELECT
+    id,
+    username,
+    password,
+    name,
+    role,
+    tipe,
+    COALESCE(branch_id,0),
+    COALESCE(face_registered,false),
+    COALESCE(profile_completed,false),
+    COALESCE(onboarding_completed,false),
+    must_change_password
+FROM employees
+WHERE username = $1
+AND status = 'active'
+`, username).Scan(
 		&user.ID,
-		&user.Name,
 		&user.Username,
+		&hashed,
+		&user.Name,
 		&user.Role,
 		&user.EmployeeType,
-		&branchID, // ← scan ke NullInt64
-		&hashed,
+		&user.BranchID,
+
+		&user.FaceRegistered,
+		&user.ProfileCompleted,
+		&user.OnboardingCompleted,
+
 		&mustChange,
 	)
+
 	if err != nil {
 		return nil, "", false, err
-	}
-
-	if branchID.Valid {
-		user.BranchID = int(branchID.Int64)
 	}
 
 	return &user, hashed, mustChange, nil

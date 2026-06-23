@@ -54,6 +54,15 @@ type FaceStatusResponse struct {
 	RegisteredAt string `json:"registered_at,omitempty"`
 }
 
+// VerifyFaceResponse
+// Response POST /attendance/verify-face
+// FE simpan face_token ini untuk dikirim ke /attendance/checkin
+type VerifyFaceResponse struct {
+	FaceToken       string  `json:"face_token"`
+	ConfidenceScore float64 `json:"confidence_score"`
+	Verified        bool    `json:"verified"`
+}
+
 // ─────────────────────────────────────────
 // CHECKIN VERIFY
 // ─────────────────────────────────────────

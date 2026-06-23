@@ -50,6 +50,10 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 				"role":      user.Role,
 				"tipe":      user.EmployeeType,
 				"branch_id": user.BranchID,
+
+				"face_registered":      user.FaceRegistered,
+				"profile_completed":    user.ProfileCompleted,
+				"onboarding_completed": user.OnboardingCompleted,
 			},
 		},
 	})

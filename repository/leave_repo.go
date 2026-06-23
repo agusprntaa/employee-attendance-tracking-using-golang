@@ -593,33 +593,37 @@ func (r *LeaveRepo) GetCalendarDetail(branchID int, date string) (map[string]int
 		"leaves":   leaves,
 	}, nil
 }
+
 // GetRecentActivity — ambil aktivitas terbaru seputar cuti di cabang tertentu
 // Menggabungkan 2 jenis aktivitas:
 // 1. "submitted" → karyawan baru mengajukan cuti (berdasarkan created_at)
 // 2. "approved" / "rejected" → admin sudah memproses pengajuan (berdasarkan updated_at)
 func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
-			lr.id,
-			COALESCE(e.name, '') AS employee_name,
-			lr.status,
-			lr.created_at,
-			lr.updated_at
-		FROM leave_requests lr
-		JOIN employees e ON e.id = lr.employee_id
-		WHERE e.branch_id = $1
-		ORDER BY 
-			GREATEST(lr.created_at, COALESCE(lr.updated_at, lr.created_at)) DESC
-		LIMIT $2
-	`
- 
+    SELECT 
+        lr.id,
+        COALESCE(e.name, '') AS employee_name,
+        lr.status,
+        lr.created_at,
+        lr.updated_at
+    FROM leave_requests lr
+    JOIN employees e ON e.id = lr.employee_id
+    WHERE e.branch_id = $1
+    AND (
+        DATE(lr.created_at) = CURRENT_DATE
+        OR DATE(lr.updated_at) = CURRENT_DATE
+    )
+    ORDER BY 
+        GREATEST(lr.created_at, COALESCE(lr.updated_at, lr.created_at)) DESC
+    LIMIT $2
+`
 	rows, err := r.DB.Query(query, branchID, limit)
 	if err != nil {
 		log.Printf("GET RECENT ACTIVITY ERROR: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
- 
+
 	var results []map[string]interface{}
 	for rows.Next() {
 		var (
@@ -632,12 +636,12 @@ func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]int
 		if err := rows.Scan(&id, &employeeName, &status, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
- 
+
 		// Tentukan type dan message berdasarkan status
 		activityType := "submitted"
 		message := employeeName + " submitted leave request"
 		activityTime := createdAt
- 
+
 		if status == "approved" {
 			activityType = "approved"
 			message = "Admin approved leave for " + employeeName
@@ -651,7 +655,7 @@ func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]int
 				activityTime = updatedAt.Time
 			}
 		}
- 
+
 		results = append(results, map[string]interface{}{
 			"id":            id,
 			"type":          activityType,
@@ -660,7 +664,7 @@ func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]int
 			"created_at":    activityTime.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
- 
+
 	if results == nil {
 		results = []map[string]interface{}{}
 	}

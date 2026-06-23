@@ -1,14 +1,22 @@
 package attendance
 
 import (
+	"absensi_karyawan/face"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
-	Service *Service
+	Service     *Service
+	FaceService *face.Service
+}
+
+func requiresFaceToken(req CheckInRequest) bool {
+	workType := strings.ToUpper(strings.TrimSpace(req.WorkType))
+	return workType != "WFA"
 }
 
 // errorMessage mapping error ke HTTP status + kode + pesan user-friendly
@@ -22,10 +30,6 @@ func errorMessage(err error) (int, string, string) {
 		return 400, "CUTOFF_EXCEEDED", "Waktu check-in sudah melewati batas maksimal"
 	case ErrGPSAccuracyLow:
 		return 400, "GPS_ACCURACY_LOW", "Akurasi GPS terlalu rendah, coba pindah ke tempat terbuka"
-	case ErrQRInvalid:
-		return 400, "QR_INVALID", "QR Code tidak valid atau sudah kadaluarsa"
-	case ErrBranchMismatch:
-		return 400, "BRANCH_MISMATCH", "QR Code bukan milik cabang kamu"
 	case ErrOutOfRadius:
 		return 400, "OUT_OF_RADIUS", "Kamu berada di luar radius kantor"
 	case ErrWFAReasonTooShort:
@@ -38,6 +42,20 @@ func errorMessage(err error) (int, string, string) {
 		return 400, "NOT_WORK_DAY", "Hari ini bukan hari kerja untuk divisimu"
 	case ErrEmployeeDataIncomplete:
 		return 422, "EMPLOYEE_DATA_INCOMPLETE", "Data karyawan tidak lengkap, hubungi admin untuk mengatur divisi dan cabang"
+	case face.ErrFaceNotVerified:
+		return 403, "FACE_NOT_VERIFIED", "Verifikasi wajah dulu sebelum checkin"
+	case face.ErrTokenExpired:
+		return 400, "TOKEN_EXPIRED", "Waktu habis, mulai ulang dari Check In"
+	case face.ErrTokenUsed:
+		return 400, "TOKEN_USED", "Token sudah digunakan"
+	case face.ErrTokenInvalid:
+		return 400, "TOKEN_INVALID", "Token tidak valid"
+	case ErrEventNotFound:
+		return 404, "EVENT_NOT_FOUND", "QR event tidak valid atau sudah expired"
+	case ErrEventNotInvited:
+		return 403, "EVENT_NOT_INVITED", "Kamu tidak terdaftar di event ini"
+	case ErrAlreadyCheckedInEvent:
+		return 400, "ALREADY_CHECKED_IN_EVENT", "Kamu sudah absen di event ini"
 	default:
 		return 500, "INTERNAL_ERROR", "Terjadi kesalahan server, coba lagi"
 	}
@@ -52,20 +70,57 @@ func (h *Handler) CheckIn(c *fiber.Ctx) error {
 
 	var req CheckInRequest
 	if err := c.BodyParser(&req); err != nil {
-		log.Println("BODY PARSER ERROR:", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
-			"code":    "INVALID_REQUEST",
-			"message": "Format request tidak valid",
+			"message": "invalid request",
 		})
 	}
+	log.Printf("CHECKIN REQUEST: %+v\n", req)
 
-	log.Println("RAW BODY:", string(c.Body()))
-	log.Printf("REQUEST PARSED: %+v\n", req)
+	if requiresFaceToken(req) {
+		if req.FaceToken == "" {
+			return c.Status(400).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "MISSING_FACE_TOKEN",
+				"message": "face_token wajib diisi untuk check-in WFO",
+			})
+		}
 
+		_, _, err := h.FaceService.ValidateFaceTokenForCheckin(employeeID, req.FaceToken)
+		if err != nil {
+			switch err {
+			case face.ErrFaceNotVerified:
+				return c.Status(403).JSON(fiber.Map{
+					"status":  "error",
+					"code":    "FACE_NOT_VERIFIED",
+					"message": "Verifikasi wajah dulu sebelum checkin",
+				})
+			case face.ErrTokenExpired:
+				return c.Status(400).JSON(fiber.Map{
+					"status":  "error",
+					"code":    "TOKEN_EXPIRED",
+					"message": "Waktu habis, mulai ulang dari Check In",
+				})
+			case face.ErrTokenUsed:
+				return c.Status(400).JSON(fiber.Map{
+					"status":  "error",
+					"code":    "TOKEN_USED",
+					"message": "Token sudah digunakan",
+				})
+			default:
+				return c.Status(400).JSON(fiber.Map{
+					"status":  "error",
+					"code":    "TOKEN_INVALID",
+					"message": "Token tidak valid",
+				})
+			}
+		}
+	}
+
+	// Proses checkin — service akan validasi QR, GPS, jam masuk,
+	// sekaligus consume token via FaceRepo.ConsumeFaceToken
 	record, err := h.Service.CheckIn(employeeID, req)
 	if err != nil {
-		log.Println("CHECKIN ERROR:", err)
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
 			"status":  "error",
@@ -74,10 +129,58 @@ func (h *Handler) CheckIn(c *fiber.Ctx) error {
 		})
 	}
 
+	if req.FaceToken != "" {
+		_ = h.FaceService.ConsumeToken(req.FaceToken)
+	}
+
 	return c.Status(201).JSON(fiber.Map{
 		"status":  "success",
 		"message": "Check-in berhasil",
 		"data":    recordToResponse(record),
+	})
+}
+
+func (h *Handler) CheckInEvent(c *fiber.Ctx) error {
+	employeeID := c.Locals("user_id").(int)
+
+	var body struct {
+		FaceToken   string `json:"face_token"`
+		EventQRCode string `json:"event_qr_code"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"status": "error", "message": "Format request tidak valid"})
+	}
+	if body.FaceToken == "" || body.EventQRCode == "" {
+		return c.Status(400).JSON(fiber.Map{"status": "error", "code": "MISSING_FIELD", "message": "face_token dan event_qr_code wajib diisi"})
+	}
+
+	// Validasi face token sudah face_verified=true
+	_, confidenceScore, err := h.FaceService.ValidateFaceTokenForCheckin(employeeID, body.FaceToken)
+	if err != nil {
+		status, code, msg := errorMessage(err)
+		return c.Status(status).JSON(fiber.Map{
+			"status":  "error",
+			"code":    code,
+			"message": msg,
+		})
+	}
+
+	result, err := h.Service.CheckinQREvent(employeeID, body.EventQRCode, confidenceScore)
+	if err != nil {
+		status, code, msg := errorMessage(err)
+		return c.Status(status).JSON(fiber.Map{
+			"status":  "error",
+			"code":    code,
+			"message": msg,
+		})
+	}
+
+	_ = h.FaceService.ConsumeToken(body.FaceToken)
+
+	return c.JSON(fiber.Map{
+		"status":  "success",
+		"message": "Check-in event berhasil",
+		"data":    result,
 	})
 }
 

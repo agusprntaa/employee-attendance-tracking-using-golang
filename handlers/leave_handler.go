@@ -341,18 +341,18 @@ func (h *LeaveHandler) GetCalendarDetail(c *fiber.Ctx) error {
 // ─── DETAIL PENGAJUAN CUTI BY ID ─────────────────────────────────────────────
 // GET /admin-cabang/leave/requests/:id
 // Dipakai FE untuk tampilkan modal "Detail Pengajuan Cuti"
- 
+
 func (h *LeaveHandler) GetRequestByID(c *fiber.Ctx) error {
 	claims := auth.GetClaims(c)
 	if claims == nil || claims.BranchID == nil {
 		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
- 
+
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
 		return utils.BadRequest(c, "INVALID_ID", "ID pengajuan tidak valid")
 	}
- 
+
 	data, err := h.leaveRepo.GetRequestByID(id, *claims.BranchID)
 	if err != nil {
 		return utils.InternalError(c, "Gagal mengambil detail pengajuan cuti")
@@ -360,30 +360,31 @@ func (h *LeaveHandler) GetRequestByID(c *fiber.Ctx) error {
 	if data == nil {
 		return utils.NotFound(c, "Pengajuan cuti tidak ditemukan")
 	}
- 
+
 	return utils.Success(c, data)
 }
+
 // GetRecentActivity — aktivitas terbaru seputar cuti
 // GET /admin-cabang/leave/recent-activity
 // Query param opsional: limit (default 10)
 // Dipakai FE untuk tampilkan panel "Recent Activity" di dashboard cuti
- 
+
 func (h *LeaveHandler) GetRecentActivity(c *fiber.Ctx) error {
 	claims := auth.GetClaims(c)
 	if claims == nil || claims.BranchID == nil {
 		return utils.BadRequest(c, "NO_BRANCH", "Admin tidak memiliki cabang yang terdaftar")
 	}
- 
+
 	// Default 10 aktivitas terbaru, maksimal 50
-	limit := c.QueryInt("limit", 10)
-	if limit < 1 || limit > 50 {
-		limit = 10
+	limit := c.QueryInt("limit", 6)
+	if limit < 1 || limit > 6 {
+		limit = 6
 	}
- 
+
 	data, err := h.leaveRepo.GetRecentActivity(*claims.BranchID, limit)
 	if err != nil {
 		return utils.InternalError(c, "Gagal mengambil aktivitas terbaru")
 	}
- 
+
 	return utils.Success(c, data)
 }

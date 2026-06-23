@@ -240,3 +240,24 @@ func (e *InsightFaceEngine) DetectFace(image []byte) (int, error) {
 
 	return result.FaceCount, nil
 }
+
+// ─────────────────────────────────────────
+// IMPLEMENTASI 3: MockEngine — untuk testing
+//
+// Selalu return 1 wajah terdeteksi dan score 0.95 (di atas threshold).
+// JANGAN dipakai di production.
+//
+// Cara pakai di main.go:
+//   engine := &face.MockEngine{}
+//   faceService := &face.Service{Repo: faceRepo, Engine: engine}
+// ─────────────────────────────────────────
+
+type MockEngine struct{}
+
+func (m *MockEngine) Compare(inputImage []byte, referencePath string) (float64, error) {
+	return 0.95, nil // selalu match, di atas threshold 0.80
+}
+
+func (m *MockEngine) DetectFace(image []byte) (int, error) {
+	return 1, nil // selalu terdeteksi tepat 1 wajah
+}

@@ -58,9 +58,8 @@ func main() {
 		DB: db,
 	}
 
-	faceEngine := face.NewInsightFaceEngine(
-		"http://localhost:8001",
-	)
+	// UBAH
+	faceEngine := face.NewInsightFaceEngine("http://localhost:8001")
 
 	faceService := &face.Service{
 		Repo:      faceRepo,
@@ -117,7 +116,8 @@ func main() {
 	}
 
 	attendanceHandler := &attendance.Handler{
-		Service: attendanceService,
+		Service:     attendanceService,
+		FaceService: faceService,
 	}
 
 	// =====================================================
@@ -304,6 +304,11 @@ func main() {
 	api.Post(
 		"/attendance/checkin",
 		attendanceHandler.CheckIn,
+	)
+
+	api.Post(
+		"/attendance/checkin/event",
+		attendanceHandler.CheckInEvent,
 	)
 
 	api.Patch(

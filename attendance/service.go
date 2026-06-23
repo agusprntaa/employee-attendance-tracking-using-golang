@@ -21,14 +21,15 @@ var (
 	ErrAlreadyCheckedOut      = errors.New("ALREADY_CHECKED_OUT")
 	ErrCutoffExceeded         = errors.New("CUTOFF_EXCEEDED")
 	ErrGPSAccuracyLow         = errors.New("GPS_ACCURACY_LOW")
-	ErrQRInvalid              = errors.New("QR_INVALID")
-	ErrBranchMismatch         = errors.New("BRANCH_MISMATCH")
 	ErrOutOfRadius            = errors.New("OUT_OF_RADIUS")
 	ErrWFAReasonTooShort      = errors.New("WFA_REASON_TOO_SHORT")
 	ErrNotCheckedIn           = errors.New("NOT_CHECKED_IN")
 	ErrEarlyLeaveReason       = errors.New("EARLY_LEAVE_REASON_REQUIRED")
 	ErrNotWorkDay             = errors.New("NOT_WORK_DAY")
 	ErrEmployeeDataIncomplete = errors.New("EMPLOYEE_DATA_INCOMPLETE")
+	ErrEventNotFound          = errors.New("EVENT_NOT_FOUND")
+	ErrEventNotInvited        = errors.New("EVENT_NOT_INVITED")
+	ErrAlreadyCheckedInEvent  = errors.New("ALREADY_CHECKED_IN_EVENT")
 )
 
 // ─────────────────────────────────────────
@@ -120,24 +121,10 @@ func (s *Service) CheckIn(
 	employeeID int,
 	req CheckInRequest,
 ) (*AttendanceRecord, error) {
-
-	verified, err := s.FaceRepo.IsFaceVerified(
-		employeeID,
-		req.FaceToken,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if !verified {
-		return nil, errors.New("FACE_NOT_VERIFIED")
-	}
-
+	// Validasi face token sudah dilakukan di handler sebelum fungsi ini dipanggil.
 	if req.WorkType == "WFA" {
 		return s.checkInWFA(employeeID, req)
 	}
-
 	return s.checkInWFO(employeeID, req)
 }
 
@@ -209,15 +196,6 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 		return nil, ErrOutOfRadius
 	}
 
-	// 6. Validasi QR token + branch match
-	today := utils.TodayDate()
-	if !utils.ValidateQRToken(req.QRToken, req.BranchID, today) {
-		return nil, ErrQRInvalid
-	}
-	if req.BranchID != detail.BranchID {
-		return nil, ErrBranchMismatch
-	}
-
 	// 7. Tentukan status: ON_TIME atau LATE
 	//    Jika work_start gagal di-parse, default ON_TIME.
 	status := "ON_TIME"
@@ -249,9 +227,6 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 	if err := s.Repo.InsertAttendance(record); err != nil {
 		return nil, err
 	}
-	_ = s.FaceRepo.ConsumeFaceToken(
-		req.FaceToken,
-	)
 	return record, nil
 }
 
@@ -304,6 +279,53 @@ func (s *Service) checkInWFA(employeeID int, req CheckInRequest) (*AttendanceRec
 		return nil, err
 	}
 	return record, nil
+}
+
+func (s *Service) CheckinQREvent(
+	employeeID int,
+	eventQRCode string,
+	confidenceScore float64,
+) (map[string]interface{}, error) {
+
+	// 1. Cek QR event valid & belum kadaluarsa
+	event, err := s.Repo.GetEventByQR(eventQRCode)
+	if err != nil {
+		return nil, err
+	}
+	if event == nil {
+		return nil, ErrEventNotFound
+	}
+
+	// 2. Cek karyawan diundang ke event ini
+	invited, err := s.Repo.IsEmployeeInvitedToEvent(employeeID, event.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !invited {
+		return nil, ErrEventNotInvited
+	}
+
+	// 3. Cek belum absen di event ini hari ini
+	alreadyIn, err := s.Repo.HasCheckedInToEvent(employeeID, event.ID)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyIn {
+		return nil, ErrAlreadyCheckedInEvent
+	}
+
+	// 4. Insert attendance
+	if err := s.Repo.InsertAttendanceQREvent(employeeID, event.ID, confidenceScore); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"checkin_type":     "qr_event",
+		"event_id":         event.ID,
+		"event_name":       event.Name,
+		"face_verified":    true,
+		"confidence_score": confidenceScore,
+	}, nil
 }
 
 // ─────────────────────────────────────────

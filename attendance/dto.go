@@ -16,7 +16,7 @@ type CheckInRequest struct {
 	QRToken   string  `json:"qr_token"`   // token dari scan QR (WFO wajib)
 	BranchID  int     `json:"branch_id"`  // ID cabang dari QR (WFO wajib)
 	WFAReason string  `json:"wfa_reason"` // alasan WFA minimal 20 karakter (WFA wajib)
-	FaceToken string  `json:"face_token"` // token untuk face recognition (opsional, tapi disarankan)
+	FaceToken string  `json:"face_token"` // untuk WFO, wajib; untuk WFA boleh kosong
 }
 
 // CheckOutRequest dipakai saat karyawan checkout
