@@ -115,8 +115,26 @@ func (r *SettingsRepo) UpdateSettings(branchID int, req *models.UpdateSettingsRe
 		return err
 	}
 
-	// 2. Update tabel divisions (working hours) jika division_id disertakan
-	if req.DivisionID != nil {
+	// 2. Update tabel divisions (working hours)
+	// Jika division_id dikirim dari FE, gunakan itu
+	// Jika tidak, cari divisi pertama yang terhubung ke cabang ini dan update
+	divisionID := req.DivisionID
+	if divisionID == nil {
+		var foundDivID int
+		err = r.db.QueryRow(`
+			SELECT DISTINCT d.id
+			FROM divisions d
+			JOIN employees e ON e.division_id = d.id
+			WHERE e.branch_id = $1 AND e.status = 'active'
+			ORDER BY d.id
+			LIMIT 1
+		`, branchID).Scan(&foundDivID)
+		if err == nil {
+			divisionID = &foundDivID
+		}
+	}
+
+	if divisionID != nil {
 		_, err = r.db.Exec(`
 			UPDATE divisions SET
 				work_start         = $1::time,
@@ -125,7 +143,7 @@ func (r *SettingsRepo) UpdateSettings(branchID int, req *models.UpdateSettingsRe
 				checkin_cutoff_min = $4,
 				work_days          = $5
 			WHERE id = $6
-		`, req.StartTime, req.EndTime, req.LateThresholdMin, req.CheckinCutoffMin, req.WorkDays, *req.DivisionID)
+		`, req.StartTime, req.EndTime, req.LateThresholdMin, req.CheckinCutoffMin, req.WorkDays, *divisionID)
 		if err != nil {
 			return err
 		}

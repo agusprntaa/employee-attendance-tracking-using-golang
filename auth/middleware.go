@@ -212,23 +212,23 @@ func RequirePusatRole(c *fiber.Ctx) error {
 	role, _ := c.Locals("role").(string)
 	tipe, _ := c.Locals("tipe").(string)
 
-	// hanya untuk user tipe pusat
-	if tipe != "pusat" {
-		return c.Status(403).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "FORBIDDEN",
-			"message": "Fitur ini hanya untuk admin pusat",
-		})
-	}
+		// hanya untuk user tipe pusat
+		if tipe != "pusat" {
+			return c.Status(403).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "FORBIDDEN",
+				"message": "Fitur ini tidak untuk admin pusat",
+			})
+		}
 
-	// role harus admin atau super_admin
-	if role != "admin" && role != "super_admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "FORBIDDEN",
-			"message": "Role tidak memiliki akses",
-		})
-	}
+		// role harus admin atau super_admin
+		if role != "admin" && role != "super_admin" {
+			return c.Status(403).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "FORBIDDEN",
+				"message": "Role tidak memiliki akses",
+			})
+		}
 
 	return c.Next()
 }

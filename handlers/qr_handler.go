@@ -27,15 +27,17 @@ func (h *QRHandler) GetTodayQR(c *fiber.Ctx) error {
 	}
 
 	qr, err := h.qrRepo.GetTodayQR(*claims.BranchID)
-	if err != nil {
-		return utils.InternalError(c, "Gagal mengambil QR Code")
-	}
-	if qr == nil {
-		qr, err = h.qrRepo.RefreshQR(*claims.BranchID)
-		if err != nil {
-			return utils.InternalError(c, "Gagal membuat QR Code")
-		}
-	}
+if err != nil {
+    return c.Status(500).JSON(fiber.Map{
+        "message": err.Error(),
+    })
+}
+	qr, err = h.qrRepo.RefreshQR(*claims.BranchID)
+if err != nil {
+    return c.Status(500).JSON(fiber.Map{
+        "message": err.Error(),
+    })
+}
 
 	return utils.Success(c, buildQRResponse(qr))
 }

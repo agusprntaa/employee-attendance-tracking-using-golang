@@ -1032,8 +1032,15 @@ func (r *GlobalAdminRepository) GetAllBranchAdmins(page, limit int, search, stat
 			&BranchName,
 		)
 		if err != nil {
-			 log.Printf("SCAN ERROR: %v", err)
+			log.Printf("SCAN ERROR: %v", err)
 			return nil, 0, err
+		}
+		// Assign BranchID dan BranchName ke struct (sebelumnya tidak di-assign)
+		if BranchID.Valid {
+			admin.BranchID = int(BranchID.Int64)
+		}
+		if BranchName.Valid {
+			admin.BranchName = BranchName.String
 		}
 		admins = append(admins, admin)
 	}
@@ -1048,7 +1055,7 @@ func (r *GlobalAdminRepository) GetAllBranchAdmins(page, limit int, search, stat
 func (r *GlobalAdminRepository) GetBranchIDByName(name string) (int, error) {
 	var id int
 	err := r.db.QueryRow(`
-		SELECT id FROM branches WHERE name = $1
+		SELECT id FROM branches WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
 	`, name).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, fmt.Errorf("cabang '%s' tidak ditemukan", name)

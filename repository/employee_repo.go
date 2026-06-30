@@ -238,7 +238,21 @@ func (r *EmployeeRepo) Update(id, branchID int, req *models.UpdateEmployeeReques
 }
 
 func (r *EmployeeRepo) Delete(id, branchID int) error {
-	result, err := r.db.Exec(`
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Hapus data attendance karyawan terlebih dahulu
+	// (FK attendance.employee_id tidak memiliki ON DELETE CASCADE)
+	_, err = tx.Exec(`DELETE FROM attendance WHERE employee_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("gagal menghapus data absensi karyawan: %v", err)
+	}
+
+	// Baru hapus karyawan
+	result, err := tx.Exec(`
 		DELETE FROM employees WHERE id = $1 AND branch_id = $2
 	`, id, branchID)
 	if err != nil {
@@ -253,7 +267,7 @@ func (r *EmployeeRepo) Delete(id, branchID int) error {
 		return fmt.Errorf("karyawan tidak ditemukan di cabang ini")
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (r *EmployeeRepo) Activate(id, branchID int) error {

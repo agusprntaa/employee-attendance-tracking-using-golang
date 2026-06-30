@@ -47,16 +47,39 @@ func (r *QRRepo) GetTodayQR(branchID int) (*models.QRData, error) {
 	expiresAt := now.Add(time.Duration(minutesUntilNextSlot) * time.Minute).Truncate(time.Minute)
 
 	// Simpan ke tabel qr_tokens
+	// hapus QR WFO lama untuk branch & tanggal yang sama
 	_, err := r.db.Exec(`
-		INSERT INTO qr_tokens (token, branch_id, date, expires_at)
-		VALUES ($1, $2, $3::date, $4)
-		ON CONFLICT (branch_id, date) DO UPDATE SET
-			token      = EXCLUDED.token,
-			expires_at = EXCLUDED.expires_at
-	`, token, branchID, today, expiresAt)
+    DELETE FROM qr_tokens
+    WHERE branch_id = $1
+      AND date = $2
+      AND token_type = 'wfo'
+`, branchID, today)
+
 	if err != nil {
-		return nil, err
-	}
+    	return nil, err
+}
+
+// insert QR WFO baru
+		_, err = r.db.Exec(`
+    INSERT INTO qr_tokens (
+        token,
+        branch_id,
+        date,
+        expires_at,
+        token_type
+    )
+    VALUES (
+        $1,
+        $2,
+        $3::date,
+        $4,
+        'wfo'
+    )
+`, token, branchID, today, expiresAt)
+
+if err != nil {
+    return nil, err
+}
 
 	return &models.QRData{
 		Token:     token,
