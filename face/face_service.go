@@ -3,12 +3,13 @@ package face
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"mime/multipart"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -16,69 +17,291 @@ type Service struct {
 	Repo      *Repository
 	Engine    FaceEngine
 	DB        *sql.DB
-	Threshold float64 // default 0.80 jika 0
+	Threshold float64 // 0 → pakai DefaultThreshold (0.60)
 }
 
 // ─────────────────────────────────────────
-// Error variables — pola sama dengan leave & auth
+// Error variables
 // ─────────────────────────────────────────
 
 var (
-	ErrAlreadyCheckedIn   = errors.New("ALREADY_CHECKED_IN")
-	ErrFaceNotRegistered  = errors.New("FACE_NOT_REGISTERED")
-	ErrTokenInvalid       = errors.New("TOKEN_INVALID")
-	ErrTokenExpired       = errors.New("TOKEN_EXPIRED")
-	ErrTokenUsed          = errors.New("TOKEN_USED")
-	ErrFaceMismatch       = errors.New("FACE_MISMATCH")
-	ErrMaxAttemptExceeded = errors.New("MAX_ATTEMPT_EXCEEDED")
-	ErrNoFaceDetected     = errors.New("NO_FACE_DETECTED")
-	ErrMultipleFaces      = errors.New("MULTIPLE_FACES")
-	ErrEngineError        = errors.New("ENGINE_ERROR")
+	ErrAlreadyCheckedIn     = errors.New("ALREADY_CHECKED_IN")
+	ErrFaceNotRegistered    = errors.New("FACE_NOT_REGISTERED")
+	ErrTokenInvalid         = errors.New("TOKEN_INVALID")
+	ErrTokenExpired         = errors.New("TOKEN_EXPIRED")
+	ErrTokenUsed            = errors.New("TOKEN_USED")
+	ErrTokenNotVerified     = errors.New("TOKEN_NOT_VERIFIED")
+	ErrFaceMismatch         = errors.New("FACE_MISMATCH")
+	ErrMaxAttemptExceeded   = errors.New("MAX_ATTEMPT_EXCEEDED")
+	ErrNoFaceDetected       = errors.New("NO_FACE_DETECTED")
+	ErrMultipleFaces        = errors.New("MULTIPLE_FACES")
+	ErrEngineError          = errors.New("ENGINE_ERROR")
+	ErrOutsideRadius        = errors.New("OUTSIDE_RADIUS")
+	ErrAlreadyAttendedEvent = errors.New("ALREADY_ATTENDED_EVENT")
+	ErrQRTokenInvalid       = errors.New("QR_TOKEN_INVALID")
+	ErrQRNotEventType       = errors.New("QR_NOT_EVENT_TYPE")
+	ErrIncompletePoses      = errors.New("INCOMPLETE_POSES")
+	ErrPoseInvalid          = errors.New("POSE_INVALID")
 )
 
 // ─────────────────────────────────────────
-// RegisterFace — upload foto referensi wajah
+// Helper: haversine
 //
-// Dipanggil saat onboarding (face_registered = false)
-// atau kapan saja karyawan ingin update foto.
+// Hitung jarak dua koordinat GPS dalam meter.
+// Rumus Haversine digunakan karena akurat untuk jarak pendek (<100km).
+// Sama persis dengan implementasi di attendance WFO sebelumnya.
+// ─────────────────────────────────────────
+
+func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
+	const R = 6371000 // radius bumi dalam meter
+	phi1 := lat1 * math.Pi / 180
+	phi2 := lat2 * math.Pi / 180
+	dPhi := (lat2 - lat1) * math.Pi / 180
+	dLam := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dPhi/2)*math.Sin(dPhi/2) +
+		math.Cos(phi1)*math.Cos(phi2)*math.Sin(dLam/2)*math.Sin(dLam/2)
+	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// ─────────────────────────────────────────
+// Helper: fileHeaderToBase64
+//
+// Baca bytes dari multipart.FileHeader lalu encode ke base64 string.
+// Python service kita terima format: {"image": "<base64 string>"}
+// ─────────────────────────────────────────
+
+func fileHeaderToBase64(fh *multipart.FileHeader) (string, error) {
+	f, err := fh.Open()
+	if err != nil {
+		return "", fmt.Errorf("gagal buka file: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("gagal baca file: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// threshold — return threshold aktif (default jika tidak di-set)
+func (s *Service) threshold() float64 {
+	if s.Threshold > 0 {
+		return s.Threshold
+	}
+	return DefaultThreshold
+}
+
+// ─────────────────────────────────────────
+// GetOnboardingStatus
+// ─────────────────────────────────────────
+
+func (s *Service) GetOnboardingStatus(employeeID int) (*OnboardingStatusResponse, error) {
+	var res OnboardingStatusResponse
+	err := s.DB.QueryRow(`
+		SELECT must_change_password, face_registered, profile_completed
+		FROM employees WHERE id = $1
+	`, employeeID).Scan(
+		&res.MustChangePassword,
+		&res.FaceRegistered,
+		&res.ProfileCompleted,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("EMPLOYEE_NOT_FOUND")
+	}
+	return &res, err
+}
+
+// ─────────────────────────────────────────
+// RegisterFace — daftarkan wajah karyawan dengan terima 5 foto sekaligus
+//
+// Input: map[pose]fileHeader, contoh:
+//   {"front": file1, "left": file2, "right": file3, "up": file4, "down": file5}
 //
 // Urutan:
-// 1. Validasi ukuran file (max 5MB)
-// 2. Baca bytes → kirim ke engine
-//    - 0 wajah  → NO_FACE_DETECTED
-//    - >1 wajah → MULTIPLE_FACES
-// 3. Simpan file ke uploads/faces/
-// 4. UPDATE employees: face_reference_path + face_registered = true
-//
-// Tidak ada tabel employee_faces terpisah.
-// Satu karyawan = satu referensi aktif = satu kolom di employees.
-// ─────────────────────────────────────────
+// 1. Validasi kelima pose ada (RequiredPoses) — kalau ada yang kurang, tolak semua
+// 2. Loop tiap pose: encode base64 → DetectAndEmbed → harus tepat 1 wajah
+//    Kalau salah satu pose gagal detect → batalkan semua, jangan simpan sebagian
+// 3. Setelah semua 5 berhasil di-detect, baru SIMPAN kelimanya ke DB
+// 4. MarkFaceRegistered — set flag true
 
 func (s *Service) RegisterFace(
 	employeeID int,
-	fileHeader *multipart.FileHeader,
+	files map[string]*multipart.FileHeader,
 ) (*FaceRegisterResponse, error) {
 
-	// 1. Validasi ukuran max 5MB
-	const maxSize = 5 * 1024 * 1024
-	if fileHeader.Size > maxSize {
-		return nil, fmt.Errorf("ATTACHMENT_TOO_LARGE")
+	// 1. Validasi kelima pose lengkap
+	for _, pose := range RequiredPoses {
+		if _, ok := files[pose]; !ok {
+			return nil, ErrIncompletePoses
+		}
 	}
 
-	// 2. Baca bytes gambar
-	file, err := fileHeader.Open()
+	// 2. Detect semua dulu, kumpulkan embedding-nya di memory
+	embeddings := make(map[string][]float64)
+	for _, pose := range RequiredPoses {
+		fh := files[pose]
+
+		imageBase64, err := fileHeaderToBase64(fh)
+		if err != nil {
+			return nil, err
+		}
+
+		embedding, faceCount, err := s.Engine.DetectAndEmbed(imageBase64)
+		if err != nil {
+			return nil, ErrEngineError
+		}
+		if faceCount == 0 {
+			return nil, fmt.Errorf("NO_FACE_DETECTED_%s", pose) // pose mana yang gagal
+		}
+		if faceCount > 1 {
+			return nil, fmt.Errorf("MULTIPLE_FACES_%s", pose)
+		}
+
+		embeddings[pose] = embedding
+	}
+
+	// 3. Semua berhasil di-detect — baru simpan ke DB
+	for _, pose := range RequiredPoses {
+		if err := s.Repo.SavePoseEmbedding(employeeID, pose, embeddings[pose]); err != nil {
+			return nil, err
+		}
+	}
+
+	// 4. Set flag face_registered = true
+	if err := s.Repo.MarkFaceRegistered(employeeID); err != nil {
+		return nil, err
+	}
+
+	return &FaceRegisterResponse{
+		Message:        "5 foto wajah berhasil didaftarkan",
+		RegisteredAt:   time.Now().Format("2006-01-02"),
+		FaceRegistered: true,
+		PosesSaved:     RequiredPoses,
+	}, nil
+}
+
+func (s *Service) GetFaceStatus(employeeID int) (*FaceStatusResponse, error) {
+	data, err := s.Repo.GetEmployeeFaceData(employeeID)
 	if err != nil {
-		return nil, fmt.Errorf("gagal buka file: %w", err)
+		return nil, err
 	}
-	defer file.Close()
-
-	imageBytes := make([]byte, fileHeader.Size)
-	if _, err := file.Read(imageBytes); err != nil {
-		return nil, fmt.Errorf("gagal baca file: %w", err)
+	if !data.FaceRegistered {
+		return &FaceStatusResponse{IsRegistered: false}, nil
 	}
 
-	// 3. Validasi jumlah wajah via engine
-	faceCount, err := s.Engine.DetectFace(imageBytes)
+	poses, err := s.Repo.GetRegisteredPoses(employeeID)
+	if err != nil {
+		return nil, err
+	}
+
+	var registeredAt string
+	_ = s.DB.QueryRow(`
+		SELECT COALESCE(TO_CHAR(face_registered_at, 'YYYY-MM-DD'), '')
+		FROM employees WHERE id = $1
+	`, employeeID).Scan(&registeredAt)
+
+	return &FaceStatusResponse{
+		IsRegistered: true,
+		RegisteredAt: registeredAt,
+		Poses:        poses,
+	}, nil
+}
+
+// ─────────────────────────────────────────
+// GenerateFaceToken
+// ─────────────────────────────────────────
+
+func (s *Service) GenerateFaceToken(employeeID int) (*FaceTokenResponse, error) {
+	data, err := s.Repo.GetEmployeeFaceData(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if !data.FaceRegistered {
+		return nil, ErrFaceNotRegistered
+	}
+
+	alreadyIn, err := s.Repo.HasCheckedInToday(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyIn {
+		return nil, ErrAlreadyCheckedIn
+	}
+
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("gagal generate token: %w", err)
+	}
+	token := hex.EncodeToString(b)
+
+	if err := s.Repo.InsertFaceToken(employeeID, token); err != nil {
+		return nil, err
+	}
+
+	return &FaceTokenResponse{FaceToken: token, ExpiresIn: FaceTokenTTL}, nil
+}
+
+// ─────────────────────────────────────────
+// VerifyFace - bandingkan ke 5 embedding, ambil similarity tertinggi
+// ─────────────────────────────────────────
+// Urutan:
+// 1. Validasi token (sama seperti sebelumnya)
+// 2. Ambil 5 embedding tersimpan dari GetAllPoseEmbeddings
+//    Kalau kosong (belum register sama sekali) → FACE_NOT_REGISTERED
+// 3. Cek max attempts
+// 4. Generate embedding baru dari foto live
+// 5. Loop bandingkan embedding baru ke KELIMA embedding tersimpan
+//    Simpan similarity tertinggi + nama pose-nya
+// 6a. Similarity tertinggi < threshold → MISMATCH
+// 6b. Similarity tertinggi >= threshold → MATCH, simpan score + pose yang match
+// ─────────────────────────────────────────
+
+func (s *Service) VerifyFace(
+	employeeID int,
+	faceToken string,
+	fileHeader *multipart.FileHeader,
+	ipAddress string,
+) (*VerifyFaceResponse, error) {
+
+	// 1. Validasi token
+	ft, err := s.Repo.GetFaceToken(faceToken, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if ft == nil {
+		return nil, ErrTokenInvalid
+	}
+	if ft.IsUsed {
+		return nil, ErrTokenUsed
+	}
+	if time.Now().After(ft.ExpiresAt) {
+		return nil, ErrTokenExpired
+	}
+
+	// 2. Ambil semua embedding tersimpan (harusnya 5 baris)
+	storedEmbeddings, err := s.Repo.GetAllPoseEmbeddings(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if len(storedEmbeddings) == 0 {
+		return nil, ErrFaceNotRegistered
+	}
+
+	// 3. Cek max attempts
+	failures, err := s.Repo.CountDailyFailures(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if failures >= MaxDailyFailedAttempts {
+		return nil, ErrMaxAttemptExceeded
+	}
+
+	// 4. Generate embedding dari foto live
+	imageBase64, err := fileHeaderToBase64(fileHeader)
+	if err != nil {
+		return nil, err
+	}
+	newEmbedding, faceCount, err := s.Engine.DetectAndEmbed(imageBase64)
 	if err != nil {
 		return nil, ErrEngineError
 	}
@@ -89,165 +312,55 @@ func (s *Service) RegisterFace(
 		return nil, ErrMultipleFaces
 	}
 
-	// 4. Simpan file ke disk
-	// Path: uploads/faces/{employeeID}_{unix_timestamp}.jpg
-	// Konsisten dengan pola attachment di leave module
-	uploadDir := "uploads/faces"
-	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("gagal buat folder: %w", err)
+	// 5. Loop bandingkan ke kelima embedding tersimpan — ambil similarity tertinggi
+	var bestScore float64
+	var bestPose string
+	for _, stored := range storedEmbeddings {
+		score, err := s.Engine.CompareEmbeddings(newEmbedding, stored.Embedding)
+		if err != nil {
+			return nil, ErrEngineError
+		}
+		if score > bestScore {
+			bestScore = score
+			bestPose = stored.Pose
+		}
 	}
 
-	filename := fmt.Sprintf("%d_%d.jpg", employeeID, time.Now().Unix())
-	savePath := filepath.Join(uploadDir, filename)
-
-	if err := os.WriteFile(savePath, imageBytes, 0644); err != nil {
-		return nil, fmt.Errorf("gagal simpan file: %w", err)
+	// 6a. Mismatch — similarity tertinggi pun masih di bawah threshold
+	if bestScore < s.threshold() {
+		_ = s.Repo.InsertVerificationLog(nil, employeeID, 0, "mismatch", bestScore, ipAddress)
+		return nil, ErrFaceMismatch
 	}
 
-	// 5. UPDATE employees — simpan path dan tandai face_registered = true
-	if err := s.Repo.UpdateFaceReference(employeeID, savePath); err != nil {
-		_ = os.Remove(savePath) // hapus file jika DB gagal
+	// 6b. Match
+	if err := s.Repo.MarkFaceVerified(ft.ID, bestScore); err != nil {
 		return nil, err
 	}
+	_ = s.Repo.InsertVerificationLog(nil, employeeID, 0, "match", bestScore, ipAddress)
 
-	return &FaceRegisterResponse{
-		Message:        "Foto wajah berhasil didaftarkan",
-		RegisteredAt:   time.Now().Format("2006-01-02"),
-		FaceRegistered: true,
-	}, nil
-}
-
-// GetFaceStatus — cek status pendaftaran wajah karyawan
-// FE pakai ini untuk tampilkan banner di halaman face register
-func (s *Service) GetFaceStatus(employeeID int) (*FaceStatusResponse, error) {
-	_, registered, err := s.Repo.GetFaceReference(employeeID)
-	if err != nil {
-		return nil, err
-	}
-	if !registered {
-		return &FaceStatusResponse{IsRegistered: false}, nil
-	}
-
-	// Ambil registered_at dari DB untuk info tambahan
-	var registeredAt string
-	_ = s.Repo.DB.QueryRow(`
-		SELECT COALESCE(TO_CHAR(face_registered_at, 'YYYY-MM-DD'), '')
-		FROM employees WHERE id = $1
-	`, employeeID).Scan(&registeredAt)
-
-	return &FaceStatusResponse{
-		IsRegistered: true,
-		RegisteredAt: registeredAt,
+	return &VerifyFaceResponse{
+		Verified:        true,
+		ConfidenceScore: bestScore,
+		MatchedPose:     bestPose,
+		FaceToken:       faceToken,
 	}, nil
 }
 
 // ─────────────────────────────────────────
-// GenerateFaceToken — generate token sebelum kamera dibuka
-//
-// Dipanggil FE saat karyawan tap CHECK IN.
-// Kamera TIDAK boleh dibuka sebelum token ini ada.
-//
-// Urutan validasi:
-// 1. face_registered = true? → kalau belum → FACE_NOT_REGISTERED
-//    (cek ini dulu karena lebih murah dari cek checkin)
-// 2. Sudah checkin hari ini? → ALREADY_CHECKED_IN
-// 3. Generate token crypto/rand 32 byte (hex = 64 char)
-// 4. Simpan ke face_tokens TTL 2 menit
-//
-// Kenapa must_change_password TIDAK dicek di sini?
-// Sudah ditangani middleware MustChangePassword dari auth package.
-// Semua route yang butuh password sudah diganti tidak bisa diakses
-// kecuali lewat /change-password dulu.
+// Checkin
 // ─────────────────────────────────────────
-
-func (s *Service) GenerateFaceToken(employeeID int) (*FaceTokenResponse, error) {
-	// 1. Cek face sudah terdaftar
-	_, registered, err := s.Repo.GetFaceReference(employeeID)
-	if err != nil {
-		return nil, err
-	}
-	if !registered {
-		return nil, ErrFaceNotRegistered
-	}
-
-	// 2. Cek sudah checkin hari ini
-	alreadyIn, err := s.Repo.HasCheckedInToday(employeeID)
-	if err != nil {
-		return nil, err
-	}
-	if alreadyIn {
-		return nil, ErrAlreadyCheckedIn
-	}
-
-	// 3. Generate token aman dengan crypto/rand
-	// Jangan pakai math/rand — tidak aman untuk token autentikasi
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return nil, fmt.Errorf("gagal generate token: %w", err)
-	}
-	token := hex.EncodeToString(b) // 64 karakter hex
-
-	// 4. Simpan ke DB (trigger DB auto-cleanup token expired lama)
-	if err := s.Repo.InsertFaceToken(employeeID, token); err != nil {
-		return nil, err
-	}
-
-	return &FaceTokenResponse{
-		FaceToken: token,
-		ExpiresIn: FaceTokenTTL, // 120 detik
-	}, nil
-}
-
-// ─────────────────────────────────────────
-// VerifyAndCheckin — verifikasi wajah + simpan attendance
-//
-// Ini fungsi paling kritis di seluruh face module.
-// Urutan TIDAK BOLEH diubah:
-//
-// 1. Validasi token
-//    - Tidak ada di DB        → TOKEN_INVALID
-//    - is_used = true         → TOKEN_USED
-//    - Sudah expired          → TOKEN_EXPIRED
-//
-// 2. Load foto referensi dari employees.face_reference_path
-//    - Kosong / NULL          → FACE_NOT_REGISTERED
-//
-// 3. Cek percobaan gagal hari ini (SEBELUM proses gambar)
-//    - Sudah ≥ 5              → MAX_ATTEMPT_EXCEEDED
-//
-// 4. Baca bytes gambar dari file upload
-//
-// 5. Panggil face engine → confidence score
-//    - Engine error           → ENGINE_ERROR (JANGAN log sebagai mismatch)
-//
-// 6a. score < threshold:
-//    - Log mismatch (tanpa tx)
-//    - Return FACE_MISMATCH
-//    - Token TETAP valid sampai expired (karyawan bisa coba lagi)
-//
-// 6b. score >= threshold:
-//    BEGIN TRANSACTION
-//    - INSERT attendances (face_verified=true, confidence_score)
-//    - UPDATE face_tokens SET is_used=true
-//    - INSERT face_verification_logs (result=match)
-//    COMMIT
-//    (jika salah satu gagal → ROLLBACK semua)
-// ─────────────────────────────────────────
-
-func (s *Service) VerifyAndCheckin(
+func (s *Service) Checkin(
 	employeeID int,
 	faceToken string,
-	fileHeader *multipart.FileHeader,
+	latitude, longitude float64,
 	ipAddress string,
-) (*CheckinVerifyResponse, error) {
+) (*CheckinResponse, error) {
 
-	// 1. Validasi token — urutan cek penting
 	ft, err := s.Repo.GetFaceToken(faceToken, employeeID)
 	if err != nil {
 		return nil, err
 	}
 	if ft == nil {
-		// Token tidak ada di DB atau bukan milik employee ini
 		return nil, ErrTokenInvalid
 	}
 	if ft.IsUsed {
@@ -256,201 +369,122 @@ func (s *Service) VerifyAndCheckin(
 	if time.Now().After(ft.ExpiresAt) {
 		return nil, ErrTokenExpired
 	}
+	if !ft.FaceVerified {
+		return nil, ErrTokenNotVerified
+	}
 
-	// 2. Load foto referensi dari kolom employees
-	referencePath, registered, err := s.Repo.GetFaceReference(employeeID)
+	empData, err := s.Repo.GetEmployeeFaceData(employeeID)
 	if err != nil {
 		return nil, err
 	}
-	if !registered || referencePath == "" {
-		return nil, ErrFaceNotRegistered
-	}
 
-	// 3. Cek percobaan gagal hari ini SEBELUM proses gambar
-	// Jangan buang resource engine jika sudah pasti ditolak
-	failures, err := s.Repo.CountDailyFailures(employeeID)
+	branchLat, branchLon, radiusMeter, err := s.Repo.GetBranchLocation(empData.BranchID)
 	if err != nil {
 		return nil, err
 	}
-	if failures >= MaxDailyFailedAttempts {
-		return nil, ErrMaxAttemptExceeded
+	distance := haversineMeters(latitude, longitude, branchLat, branchLon)
+	if distance > float64(radiusMeter) {
+		return nil, ErrOutsideRadius
 	}
 
-	// 4. Baca bytes gambar dari file upload FE
-	file, err := fileHeader.Open()
+	now := time.Now()
+	lateMinutes := 0
+	status := "ON_TIME"
+	workStart := time.Date(now.Year(), now.Month(), now.Day(), 8, 30, 0, 0, now.Location())
+	if now.After(workStart) {
+		lateMinutes = int(now.Sub(workStart).Minutes())
+		status = "LATE"
+	}
+
+	tx, err := s.DB.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("gagal buka file: %w", err)
+		return nil, err
 	}
-	defer file.Close()
+	defer tx.Rollback()
 
-	imageBytes := make([]byte, fileHeader.Size)
-	if _, err := file.Read(imageBytes); err != nil {
-		return nil, fmt.Errorf("gagal baca file: %w", err)
-	}
-
-	// 5. Panggil face engine
-	threshold := s.Threshold
-	if threshold == 0 {
-		threshold = DefaultThreshold
-	}
-
-	score, err := s.Engine.Compare(imageBytes, referencePath)
-	if err != nil {
-		// Engine error BUKAN kesalahan karyawan — jangan log sebagai mismatch
-		return nil, ErrEngineError
-	}
-
-	// 6a. MISMATCH
-	if score < threshold {
-
-		_ = s.Repo.InsertVerificationLog(
-			nil,
-			employeeID,
-			0,
-			"mismatch",
-			score,
-			ipAddress,
-		)
-
-		return nil, ErrFaceMismatch
-	}
-
-	// 6b. MATCH
-
-	err = s.Repo.MarkFaceVerified(
-		ft.ID,
-		score,
+	attendanceID, err := s.Repo.InsertFaceCheckin(
+		tx, employeeID, empData.BranchID,
+		latitude, longitude, distance,
+		lateMinutes, status, ft.ConfidenceScore,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	_ = s.Repo.InsertVerificationLog(
-		nil,
-		employeeID,
-		0,
-		"match",
-		score,
-		ipAddress,
-	)
+	if err := s.Repo.MarkTokenConsumed(tx, ft.ID); err != nil {
+		return nil, err
+	}
 
-	return &CheckinVerifyResponse{
-		EmployeeID: employeeID,
-		Date:       time.Now().Format("2006-01-02"),
+	if err := s.Repo.InsertVerificationLog(tx, employeeID, attendanceID, "checkin", ft.ConfidenceScore, ipAddress); err != nil {
+		return nil, err
+	}
 
-		FaceVerified:    true,
-		ConfidenceScore: score,
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &CheckinResponse{
+		AttendanceID: attendanceID,
+		EmployeeID:   employeeID,
+		Date:         now.Format("2006-01-02"),
+		CheckinTime:  now.Format("15:04:05"),
+		LateMinutes:  lateMinutes,
+		Status:       status,
+		CheckinType:  "face_geo",
 	}, nil
 }
 
-func (s *Service) GetOnboardingStatus(
+// CheckinQREvent — TIDAK BERUBAH
+func (s *Service) CheckinQREvent(
 	employeeID int,
-) (*OnboardingStatusResponse, error) {
+	req CheckinQRRequest,
+	ipAddress string,
+) (*CheckinQRResponse, error) {
 
-	var res OnboardingStatusResponse
-
-	err := s.DB.QueryRow(`
-		SELECT
-			must_change_password,
-			face_registered,
-			profile_completed
-		FROM employees
-		WHERE id = $1
-	`, employeeID).Scan(
-		&res.MustChangePassword,
-		&res.FaceRegistered,
-		&res.ProfileCompleted,
-	)
-
+	qt, err := s.Repo.GetQRTokenByValue(req.QRToken)
 	if err != nil {
+		return nil, err
+	}
+	if qt == nil {
+		return nil, ErrQRTokenInvalid
+	}
+	if qt.TokenType != "event" {
+		return nil, ErrQRNotEventType
+	}
+	if time.Now().After(qt.ExpiresAt) {
+		return nil, ErrQRTokenInvalid
+	}
 
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("EMPLOYEE_NOT_FOUND")
-		}
-
+	event, err := s.Repo.GetEventData(qt.EventID)
+	if err != nil {
 		return nil, err
 	}
 
-	return &res, nil
-}
+	distance := haversineMeters(req.Latitude, req.Longitude, event.Latitude, event.Longitude)
+	if distance > float64(event.RadiusMeter) {
+		return nil, ErrOutsideRadius
+	}
 
-func (s *Service) VerifyFace(
-	employeeID int,
-	faceToken string,
-	fileHeader *multipart.FileHeader,
-	ipAddress string,
-) error {
+	attended, err := s.Repo.HasAttendedEvent(employeeID, event.ID)
+	if err != nil {
+		return nil, err
+	}
+	if attended {
+		return nil, ErrAlreadyAttendedEvent
+	}
 
-	ft, err := s.Repo.GetFaceToken(
-		faceToken,
-		employeeID,
+	attendanceID, err := s.Repo.UpsertQREventCheckin(
+		employeeID, event.BranchID, event.ID,
+		req.Latitude, req.Longitude, distance,
 	)
-
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if ft == nil {
-		return ErrTokenInvalid
-	}
-
-	if ft.IsUsed {
-		return ErrTokenUsed
-	}
-
-	if time.Now().After(ft.ExpiresAt) {
-		return ErrTokenExpired
-	}
-
-	referencePath, registered, err :=
-		s.Repo.GetFaceReference(employeeID)
-
-	if err != nil {
-		return err
-	}
-
-	if !registered {
-		return ErrFaceNotRegistered
-	}
-
-	file, err := fileHeader.Open()
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	imageBytes := make([]byte, fileHeader.Size)
-
-	_, err = file.Read(imageBytes)
-	if err != nil {
-		return err
-	}
-
-	score, err := s.Engine.Compare(
-		imageBytes,
-		referencePath,
-	)
-
-	if err != nil {
-		return ErrEngineError
-	}
-
-	if score < s.Threshold {
-
-		_ = s.Repo.InsertVerificationLog(
-			nil,
-			employeeID,
-			0,
-			"mismatch",
-			score,
-			ipAddress,
-		)
-
-		return ErrFaceMismatch
-	}
-
-	return s.Repo.MarkFaceVerified(
-		ft.ID,
-		score,
-	)
+	return &CheckinQRResponse{
+		AttendanceID: attendanceID,
+		EventName:    event.Name,
+		Date:         time.Now().Format("2006-01-02"),
+		CheckinTime:  time.Now().Format("15:04:05"),
+	}, nil
 }

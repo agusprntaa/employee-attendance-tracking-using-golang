@@ -66,7 +66,7 @@ func main() {
 		Repo:      faceRepo,
 		Engine:    faceEngine,
 		DB:        db,
-		Threshold: 0.80,
+		Threshold: 0.60,
 	}
 
 	faceHandler := &face.Handler{
@@ -303,7 +303,12 @@ func main() {
 
 	api.Post(
 		"/attendance/checkin",
-		attendanceHandler.CheckIn,
+		faceHandler.Checkin,
+	)
+
+	api.Post(
+		"/attendance/checkin-qr",
+		faceHandler.CheckinQREvent,
 	)
 
 	api.Patch(

@@ -5,22 +5,22 @@ package face
 // ─────────────────────────────────────────
 
 const (
-	DefaultThreshold       = 0.80 // confidence score minimum
-	MaxDailyFailedAttempts = 5    // max percobaan gagal per hari
-	FaceTokenTTL           = 120  // detik (2 menit)
+	// threshold diturunkan dari 0.80 ke 0.60
+	// InsightFace buffalo_l menggunakan cosine similarity (bukan persentase seperti AWS).
+	// Nilai 0.60 adalah batas aman untuk kondisi lighting/sudut berbeda.
+	// AWS Rekognition pakai skala 0-100, InsightFace pakai 0.0-1.0 — beda skala!
+	DefaultThreshold       = 0.60
+	MaxDailyFailedAttempts = 5
+	FaceTokenTTL           = 120 // detik
 )
+
+// Daftar pose yang wajib dikirim saat registrasi — urutan ini dipakai validasi
+var RequiredPoses = []string{"front", "left", "right", "up", "down"}
 
 // ─────────────────────────────────────────
 // ONBOARDING
 // ─────────────────────────────────────────
 
-// OnboardingStatusResponse — response GET /employee/onboarding-status
-//
-// FE pakai ini setelah login untuk routing:
-//   must_change_password = true  → halaman ubah password
-//   face_registered      = false → halaman tambah wajah
-//   profile_completed    = false → halaman lengkapi biodata
-//   semua sudah selesai          → masuk dashboard
 type OnboardingStatusResponse struct {
 	MustChangePassword bool `json:"must_change_password"`
 	FaceRegistered     bool `json:"face_registered"`
@@ -31,39 +31,71 @@ type OnboardingStatusResponse struct {
 // FACE TOKEN
 // ─────────────────────────────────────────
 
-// FaceTokenResponse — response POST /attendance/face-token
 type FaceTokenResponse struct {
-	FaceToken string `json:"face_token"` // hex 64 karakter
-	ExpiresIn int    `json:"expires_in"` // selalu 120 detik
+	FaceToken string `json:"face_token"`
+	ExpiresIn int    `json:"expires_in"`
 }
 
 // ─────────────────────────────────────────
 // FACE REGISTER
 // ─────────────────────────────────────────
 
-// FaceRegisterResponse — response POST /employee/face/register
 type FaceRegisterResponse struct {
-	Message        string `json:"message"`
-	RegisteredAt   string `json:"registered_at"`
-	FaceRegistered bool   `json:"face_registered"` // selalu true
+	Message        string   `json:"message"`
+	RegisteredAt   string   `json:"registered_at"`
+	FaceRegistered bool     `json:"face_registered"`
+	PosesSaved     []string `json:"poses_saved"` // ["front","left","right","up","down"]
 }
 
-// FaceStatusResponse — response GET /employee/face/status
 type FaceStatusResponse struct {
-	IsRegistered bool   `json:"is_registered"`
-	RegisteredAt string `json:"registered_at,omitempty"`
+	IsRegistered bool     `json:"is_registered"`
+	RegisteredAt string   `json:"registered_at,omitempty"`
+	Poses        []string `json:"poses"` // pose yang sudah tersimpan
 }
 
 // ─────────────────────────────────────────
-// CHECKIN VERIFY
+// VERIFY FACE (step terpisah sebelum checkin)
 // ─────────────────────────────────────────
 
-// CheckinVerifyResponse — response POST /attendance/checkin-verify
-type CheckinVerifyResponse struct {
-	AttendanceID    int     `json:"attendance_id"`
-	EmployeeID      int     `json:"employee_id"`
-	Date            string  `json:"date"`
-	CheckinTime     string  `json:"check_in"`
-	FaceVerified    bool    `json:"face_verified"`
+type VerifyFaceResponse struct {
+	Verified        bool    `json:"verified"`
 	ConfidenceScore float64 `json:"confidence_score"`
+	MatchedPose     string  `json:"matched_pose"` // pose dengan similarity tertinggi
+	FaceToken       string  `json:"face_token"`   // token yang sama, dikembalikan untuk step checkin
+}
+
+// ─────────────────────────────────────────
+// CHECKIN (step final setelah verify)
+// ─────────────────────────────────────────
+
+// CheckinResponse — response POST /attendance/checkin
+// checkin sekarang endpoint terpisah, terima face_token yang sudah verified
+type CheckinResponse struct {
+	AttendanceID int    `json:"attendance_id"`
+	EmployeeID   int    `json:"employee_id"`
+	Date         string `json:"date"`
+	CheckinTime  string `json:"check_in"`
+	LateMinutes  int    `json:"late_minutes"`
+	Status       string `json:"status"`
+	CheckinType  string `json:"checkin_type"`
+}
+
+// ─────────────────────────────────────────
+// CHECKIN QR EVENT
+// ─────────────────────────────────────────
+
+// CheckinQRRequest — body POST /attendance/checkin-qr
+// endpoint khusus absen QR event luar kantor
+type CheckinQRRequest struct {
+	QRToken   string  `json:"qr_token"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+// CheckinQRResponse — response POST /attendance/checkin-qr
+type CheckinQRResponse struct {
+	AttendanceID int    `json:"attendance_id"`
+	EventName    string `json:"event_name"`
+	Date         string `json:"date"`
+	CheckinTime  string `json:"check_in"`
 }

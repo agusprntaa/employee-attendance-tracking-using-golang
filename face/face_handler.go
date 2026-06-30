@@ -1,7 +1,8 @@
 package face
 
 import (
-	"log"
+	"fmt"
+	"mime/multipart"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,7 +12,7 @@ type Handler struct {
 	Service *Service
 }
 
-// errorMessage — pola sama dengan leave/handler.go
+// errorMessage — mapping error ke HTTP status + kode + pesan user-friendly
 func errorMessage(err error) (int, string, string) {
 	switch err {
 	case ErrAlreadyCheckedIn:
@@ -24,6 +25,8 @@ func errorMessage(err error) (int, string, string) {
 		return 400, "TOKEN_EXPIRED", "Waktu habis (2 menit), tap Check In lagi"
 	case ErrTokenUsed:
 		return 400, "TOKEN_USED", "Token sudah digunakan"
+	case ErrTokenNotVerified:
+		return 400, "TOKEN_NOT_VERIFIED", "Verifikasi wajah dulu sebelum checkin"
 	case ErrFaceMismatch:
 		return 401, "FACE_MISMATCH", "Wajah tidak dikenali, coba lagi"
 	case ErrMaxAttemptExceeded:
@@ -34,260 +37,248 @@ func errorMessage(err error) (int, string, string) {
 		return 400, "MULTIPLE_FACES", "Foto hanya boleh satu wajah"
 	case ErrEngineError:
 		return 500, "ENGINE_ERROR", "Sistem verifikasi bermasalah, coba lagi"
+	case ErrOutsideRadius:
+		return 400, "OUTSIDE_RADIUS", "Kamu berada di luar area yang diizinkan"
+	case ErrAlreadyAttendedEvent:
+		return 409, "ALREADY_ATTENDED_EVENT", "Kamu sudah absen di event ini"
+	case ErrQRTokenInvalid:
+		return 400, "QR_TOKEN_INVALID", "QR Code tidak valid atau sudah kadaluarsa"
+	case ErrQRNotEventType:
+		return 400, "QR_NOT_EVENT_TYPE", "QR Code ini bukan untuk absen event"
+	case ErrIncompletePoses:
+		return 400, "INCOMPLETE_POSES", "Kirim kelima foto: front, left, right, up, down"
+	case ErrPoseInvalid:
+		return 400, "POSE_INVALID", "Nama pose tidak dikenali"
 	default:
 		return 500, "INTERNAL_ERROR", "Terjadi kesalahan server"
 	}
 }
 
+// validateImageFile — validasi format dan ukuran file gambar
+// Dipakai di RegisterFace, VerifyFace
+func validateImageFile(c *fiber.Ctx, fieldName string) error {
+	fh, err := c.FormFile(fieldName)
+	if err != nil || fh == nil {
+		return fiber.NewError(400, "MISSING_FIELD: "+fieldName+" wajib diisi")
+	}
+	ext := strings.ToLower(fh.Filename[strings.LastIndex(fh.Filename, "."):])
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		return fiber.NewError(400, "Format file harus JPEG atau PNG")
+	}
+	if fh.Size > 5*1024*1024 {
+		return fiber.NewError(400, "Ukuran file maksimal 5MB")
+	}
+	return nil
+}
+
 // ─────────────────────────────────────────
 // GET /employee/onboarding-status
-// Dipanggil FE setelah login untuk menentukan halaman mana yang dituju
-//
-// Response 200:
-// {
-//   "must_change_password": true,
-//   "face_registered": false,
-//   "profile_completed": false
-// }
 // ─────────────────────────────────────────
 
 func (h *Handler) GetOnboardingStatus(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
-
 	result, err := h.Service.GetOnboardingStatus(employeeID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"status":  "error",
-			"message": "Gagal mengambil status onboarding",
+			"status": "error", "message": "Gagal mengambil status onboarding",
 		})
 	}
-
-	return c.JSON(fiber.Map{
-		"status": "success",
-		"data":   result,
-	})
+	return c.JSON(fiber.Map{"status": "success", "data": result})
 }
 
 // ─────────────────────────────────────────
 // POST /employee/face/register
-// Upload foto referensi wajah karyawan
-// Bisa dipanggil ulang jika ingin update foto
-//
-// Body: multipart/form-data
-//   face_image : file JPEG/JPG/PNG (max 5MB, tepat 1 wajah)
-//
-// Response 201:
-// {
-//   "message": "Foto wajah berhasil didaftarkan",
-//   "registered_at": "2026-05-29",
-//   "face_registered": true
-// }
+// Body: multipart/form-data, field: face_image
 // ─────────────────────────────────────────
 
 func (h *Handler) RegisterFace(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
-	fileHeader, err := c.FormFile("face_image")
-	if err != nil || fileHeader == nil {
-		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "MISSING_FIELD",
-			"message": "face_image wajib diisi",
-		})
+	files := make(map[string]*multipart.FileHeader)
+
+	for _, pose := range RequiredPoses {
+		fh, err := c.FormFile(pose)
+		if err != nil || fh == nil {
+			return c.Status(400).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "MISSING_FIELD",
+				"message": fmt.Sprintf("Field '%s' wajib diisi dengan foto", pose),
+			})
+		}
+
+		ext := strings.ToLower(fh.Filename[strings.LastIndex(fh.Filename, "."):])
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+			return c.Status(400).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "INVALID_FORMAT",
+				"message": fmt.Sprintf("Format file '%s' harus JPEG atau PNG", pose),
+			})
+		}
+		if fh.Size > 5*1024*1024 {
+			return c.Status(400).JSON(fiber.Map{
+				"status":  "error",
+				"code":    "FILE_TOO_LARGE",
+				"message": fmt.Sprintf("Ukuran file '%s' maksimal 5MB", pose),
+			})
+		}
+
+		files[pose] = fh
 	}
 
-	allowedExt := map[string]bool{".jpg": true, ".jpeg": true, ".png": true}
-	ext := strings.ToLower(fileHeader.Filename[strings.LastIndex(fileHeader.Filename, "."):])
-	if !allowedExt[ext] {
-		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "INVALID_FORMAT",
-			"message": "Format file harus JPEG atau PNG",
-		})
-	}
-
-	result, err := h.Service.RegisterFace(employeeID, fileHeader)
+	result, err := h.Service.RegisterFace(employeeID, files)
 	if err != nil {
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
-			"status":  "error",
-			"code":    code,
-			"message": msg,
+			"status": "error", "code": code, "message": msg,
 		})
 	}
 
-	return c.Status(201).JSON(fiber.Map{
-		"status": "success",
-		"data":   result,
-	})
+	return c.Status(201).JSON(fiber.Map{"status": "success", "data": result})
 }
 
 // ─────────────────────────────────────────
 // GET /employee/face/status
-// Cek apakah karyawan sudah daftar wajah
 // ─────────────────────────────────────────
 
 func (h *Handler) GetFaceStatus(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
-
 	result, err := h.Service.GetFaceStatus(employeeID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"status":  "error",
-			"message": "Gagal mengambil status wajah",
+			"status": "error", "message": "Gagal mengambil status wajah",
 		})
 	}
-
-	return c.JSON(fiber.Map{
-		"status": "success",
-		"data":   result,
-	})
+	return c.JSON(fiber.Map{"status": "success", "data": result})
 }
 
 // ─────────────────────────────────────────
 // POST /attendance/face-token
-// Generate token sementara TTL 2 menit
-// Dipanggil FE saat karyawan tap CHECK IN
-// Kamera TIDAK boleh dibuka sebelum token ini ada
-//
-// Tidak ada body — hanya butuh JWT
-//
-// Response 200:
-// {"face_token": "a3f9...bc12", "expires_in": 120}
+// Tidak ada body — hanya JWT
 // ─────────────────────────────────────────
 
 func (h *Handler) GenerateFaceToken(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
-
 	result, err := h.Service.GenerateFaceToken(employeeID)
 	if err != nil {
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
-			"status":  "error",
-			"code":    code,
-			"message": msg,
-			"detail":  err.Error(), // detail error asli untuk debugging, bisa dihapus di production
+			"status": "error", "code": code, "message": msg,
 		})
 	}
-
-	return c.JSON(fiber.Map{
-		"status": "success",
-		"data":   result,
-	})
+	return c.JSON(fiber.Map{"status": "success", "data": result})
 }
 
 // ─────────────────────────────────────────
-// POST /attendance/checkin-verify
-// Verifikasi wajah + simpan attendance
-//
+// POST /attendance/verify-face
 // Body: multipart/form-data
-//   face_token : string (dari /attendance/face-token)
-//   face_image : file JPEG/PNG (frame capture dari kamera)
-//
-// Response 201:
-// {
-//   "attendance_id": 42,
-//   "date": "2026-05-29",
-//   "checkin_time": "08:30:15",
-//   "face_verified": true,
-//   "confidence_score": 0.9230
-// }
+//   face_token : string
+//   face_image : file JPEG/PNG
 // ─────────────────────────────────────────
 
-func (h *Handler) VerifyAndCheckin(c *fiber.Ctx) error {
+func (h *Handler) VerifyFace(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
 	faceToken := strings.TrimSpace(c.FormValue("face_token"))
 	if faceToken == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "MISSING_FIELD",
-			"message": "face_token wajib diisi",
+			"status": "error", "code": "MISSING_FIELD", "message": "face_token wajib diisi",
 		})
 	}
 
-	fileHeader, err := c.FormFile("face_image")
-	if err != nil || fileHeader == nil {
-		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "MISSING_FIELD",
-			"message": "face_image wajib diisi",
+	if err := validateImageFile(c, "face_image"); err != nil {
+		fe := err.(*fiber.Error)
+		return c.Status(fe.Code).JSON(fiber.Map{
+			"status": "error", "message": fe.Message,
 		})
 	}
+	fh, _ := c.FormFile("face_image")
 
-	allowedExt := map[string]bool{".jpg": true, ".jpeg": true, ".png": true}
-	ext := strings.ToLower(fileHeader.Filename[strings.LastIndex(fileHeader.Filename, "."):])
-	if !allowedExt[ext] {
-		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "INVALID_FORMAT",
-			"message": "Format file harus JPEG atau PNG",
-		})
-	}
-
-	const maxSize = 5 * 1024 * 1024
-	if fileHeader.Size > maxSize {
-		return c.Status(400).JSON(fiber.Map{
-			"status":  "error",
-			"code":    "FILE_TOO_LARGE",
-			"message": "Ukuran file maksimal 5MB",
-		})
-	}
-
-	result, err := h.Service.VerifyAndCheckin(employeeID, faceToken, fileHeader, c.IP())
+	result, err := h.Service.VerifyFace(employeeID, faceToken, fh, c.IP())
 	if err != nil {
-
-		log.Printf("VERIFY ERROR: %+v\n", err)
-
 		status, code, msg := errorMessage(err)
 		return c.Status(status).JSON(fiber.Map{
+			"status": "error", "code": code, "message": msg,
+		})
+	}
+	return c.JSON(fiber.Map{"status": "success", "data": result})
+}
+
+// ─────────────────────────────────────────
+// POST /attendance/checkin
+// Body: JSON
+//   face_token : string (yang sudah face_verified = true)
+//   latitude   : float64
+//   longitude  : float64
+// ─────────────────────────────────────────
+
+func (h *Handler) Checkin(c *fiber.Ctx) error {
+	employeeID := c.Locals("user_id").(int)
+
+	var body struct {
+		FaceToken string  `json:"face_token"`
+		Latitude  float64 `json:"latitude"`
+		Longitude float64 `json:"longitude"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"status": "error", "message": "Body tidak valid",
+		})
+	}
+	if body.FaceToken == "" || body.Latitude == 0 || body.Longitude == 0 {
+		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
-			"code":    code,
-			"message": msg,
+			"message": "face_token, latitude, dan longitude wajib diisi",
 		})
 	}
 
+	result, err := h.Service.Checkin(
+		employeeID, body.FaceToken,
+		body.Latitude, body.Longitude,
+		c.IP(),
+	)
+	if err != nil {
+		status, code, msg := errorMessage(err)
+		return c.Status(status).JSON(fiber.Map{
+			"status": "error", "code": code, "message": msg,
+		})
+	}
 	return c.Status(201).JSON(fiber.Map{
-		"status":  "success",
-		"message": "Checkin berhasil",
-		"data":    result,
+		"status": "success", "message": "Checkin berhasil", "data": result,
 	})
 }
 
-func (h *Handler) VerifyFace(c *fiber.Ctx) error {
+// ─────────────────────────────────────────
+// POST /attendance/checkin-qr
+// Body: JSON
+//   qr_token  : string (dari scan QR event)
+//   latitude  : float64
+//   longitude : float64
+// ─────────────────────────────────────────
 
+func (h *Handler) CheckinQREvent(c *fiber.Ctx) error {
 	employeeID := c.Locals("user_id").(int)
 
-	faceToken := c.FormValue("face_token")
-
-	fileHeader, err := c.FormFile("face_image")
-	if err != nil {
+	var req CheckinQRRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"status": "error", "message": "Body tidak valid",
+		})
+	}
+	if req.QRToken == "" || req.Latitude == 0 || req.Longitude == 0 {
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
-			"message": "face_image wajib diisi",
+			"message": "qr_token, latitude, dan longitude wajib diisi",
 		})
 	}
 
-	err = h.Service.VerifyFace(
-		employeeID,
-		faceToken,
-		fileHeader,
-		c.IP(),
-	)
-
+	result, err := h.Service.CheckinQREvent(employeeID, req, c.IP())
 	if err != nil {
-
 		status, code, msg := errorMessage(err)
-
 		return c.Status(status).JSON(fiber.Map{
-			"status":  "error",
-			"code":    code,
-			"message": msg,
+			"status": "error", "code": code, "message": msg,
 		})
 	}
-
-	return c.JSON(fiber.Map{
-		"status":  "success",
-		"message": "Face verified",
+	return c.Status(201).JSON(fiber.Map{
+		"status": "success", "message": "Absen event berhasil", "data": result,
 	})
 }

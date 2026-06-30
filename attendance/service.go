@@ -121,17 +121,13 @@ func (s *Service) CheckIn(
 	req CheckInRequest,
 ) (*AttendanceRecord, error) {
 
-	verified, err := s.FaceRepo.IsFaceVerified(
-		employeeID,
-		req.FaceToken,
-	)
-
+	faceData, err := s.FaceRepo.GetEmployeeFaceData(employeeID)
 	if err != nil {
 		return nil, err
 	}
 
-	if !verified {
-		return nil, errors.New("FACE_NOT_VERIFIED")
+	if !faceData.FaceRegistered {
+		return nil, errors.New("FACE_NOT_REGISTERED")
 	}
 
 	if req.WorkType == "WFA" {
@@ -249,9 +245,6 @@ func (s *Service) checkInWFO(employeeID int, req CheckInRequest) (*AttendanceRec
 	if err := s.Repo.InsertAttendance(record); err != nil {
 		return nil, err
 	}
-	_ = s.FaceRepo.ConsumeFaceToken(
-		req.FaceToken,
-	)
 	return record, nil
 }
 

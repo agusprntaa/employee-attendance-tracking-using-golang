@@ -5,134 +5,60 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"os"
 )
 
 // ─────────────────────────────────────────
-// Interface — abstraksi face recognition engine
+// Interface FaceEngine
 //
-// Semua implementasi (AWS, InsightFace, dll) harus implement interface ini.
-// Service hanya tahu interface ini — swap engine tidak perlu ubah service.
+// Abstraksi engine face recognition.
+// Service hanya tahu interface ini — bisa swap engine tanpa ubah service.
 // ─────────────────────────────────────────
 
 type FaceEngine interface {
-	// Compare — bandingkan foto dari FE dengan foto referensi
+	// DetectAndEmbed — deteksi wajah dalam gambar, return embedding vektor
 	//
-	// inputImage    : bytes JPEG/PNG yang dikirim FE saat checkin
-	// referencePath : path foto referensi di disk (dari tabel employee_faces)
+	// imageBase64 : foto yang dikirim FE, sudah di-encode ke base64 string
 	//
 	// Return:
-	//   score float64 — kemiripan 0.0 (beda orang) sampai 1.0 (identik)
-	//   error         — engine error (network, timeout, dll)
-	Compare(inputImage []byte, referencePath string) (float64, error)
-
-	// DetectFace — hitung jumlah wajah dalam gambar
-	// Dipakai saat karyawan register foto referensi untuk validasi:
-	//   0 wajah → NO_FACE_DETECTED
-	//   >1 wajah → MULTIPLE_FACES
-	//   1 wajah → lolos
-	DetectFace(image []byte) (int, error)
-}
-
-// ─────────────────────────────────────────
-// IMPLEMENTASI 1: AWS Rekognition
-//
-// Rekomendasi untuk MVP — setup cepat, tidak perlu manage model.
-// Biaya: ~$0.001 per CompareFaces request.
-//
-// Cara pakai di main.go:
-//   engine := face.NewAWSEngine("ap-southeast-1")
-//   faceService := &face.Service{Repo: faceRepo, Engine: engine}
-// ─────────────────────────────────────────
-
-// AWSEngine — implementasi FaceEngine menggunakan AWS Rekognition
-// Menggunakan HTTP langsung ke AWS API supaya tidak perlu SDK besar.
-// Jika mau pakai SDK: go get github.com/aws/aws-sdk-go
-type AWSEngine struct {
-	Region          string
-	AccessKeyID     string
-	SecretAccessKey string
-	httpClient      *http.Client
-}
-
-// NewAWSEngine — buat instance AWSEngine
-// Ambil credentials dari environment variable supaya tidak hardcode
-func NewAWSEngine(region string) *AWSEngine {
-	return &AWSEngine{
-		Region:          region,
-		AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		httpClient:      &http.Client{},
-	}
-}
-
-// Compare — implementasi dengan AWS Rekognition CompareFaces
-// Jika pakai SDK aws-sdk-go, ganti body ini dengan SDK call
-func (e *AWSEngine) Compare(inputImage []byte, referencePath string) (float64, error) {
-	// Load foto referensi dari disk
-	refBytes, err := os.ReadFile(referencePath)
-	if err != nil {
-		return 0, fmt.Errorf("gagal baca foto referensi: %w", err)
-	}
-
-	// Kirim ke AWS Rekognition via SDK atau HTTP
-	// Contoh ini menggunakan struktur request AWS SDK v1
-	// Untuk implementasi penuh, pakai: github.com/aws/aws-sdk-go/service/rekognition
+	//   embedding []float64 — vektor 512 dimensi representasi wajah
+	//   faceCount int       — jumlah wajah terdeteksi (0, 1, atau >1)
+	//   error               — network error, timeout, dll
 	//
-	// result, err := rekognitionClient.CompareFaces(&rekognition.CompareFacesInput{
-	//     SourceImage: &rekognition.Image{Bytes: refBytes},
-	//     TargetImage: &rekognition.Image{Bytes: inputImage},
-	//     SimilarityThreshold: aws.Float64(0), // ambil semua match
-	// })
+	// Jika faceCount != 1, embedding akan nil.
+	// Caller (service) yang bertanggung jawab cek faceCount sebelum pakai embedding.
+	DetectAndEmbed(imageBase64 string) (embedding []float64, faceCount int, err error)
+
+	// ComparEmbeddings — hitung cosine similarity antara dua embedding
 	//
-	// if len(result.FaceMatches) == 0 {
-	//     return 0.0, nil
-	// }
-	// score := float64(*result.FaceMatches[0].Similarity) / 100.0
-	// return score, nil
-
-	// Placeholder supaya file bisa compile — replace dengan SDK call di atas
-	_ = refBytes
-	_ = inputImage
-	return 0.0, fmt.Errorf("AWS engine belum dikonfigurasi — implementasi dengan SDK")
-}
-
-// DetectFace — deteksi wajah menggunakan AWS Rekognition DetectFaces
-func (e *AWSEngine) DetectFace(image []byte) (int, error) {
-	// Implementasi dengan SDK:
-	// result, err := rekognitionClient.DetectFaces(&rekognition.DetectFacesInput{
-	//     Image: &rekognition.Image{Bytes: image},
-	// })
-	// return len(result.FaceDetails), nil
-
-	_ = image
-	return 0, fmt.Errorf("AWS engine belum dikonfigurasi")
+	// embeddingNew    : embedding dari foto yang baru dikirim FE
+	// embeddingStored : embedding yang tersimpan di DB (dari registrasi)
+	//
+	// Return:
+	//   similarity float64 — nilai 0.0 (beda orang) sampai 1.0 (identik)
+	//   error               — network error
+	//
+	// Perbandingan dilakukan di Python karena numpy lebih efisien untuk
+	// operasi vektor daripada implementasi manual di Go.
+	CompareEmbeddings(embeddingNew []float64, embeddingStored []float64) (float64, error)
 }
 
 // ─────────────────────────────────────────
-// IMPLEMENTASI 2: InsightFace self-hosted (Python microservice)
+// InsightFaceEngine — implementasi via Python microservice
 //
-// Untuk production — gratis per-request, data tidak keluar server.
-// Perlu deploy Python service terpisah dengan Docker.
-//
-// Cara deploy Python service:
-//   docker pull insightface/model-zoo
-//   atau buat sendiri dengan FastAPI + insightface library
+// Python service berjalan di port 8001 dengan dua endpoint:
+//   POST /detect  — terima base64, return embedding + face_count
+//   POST /compare — terima dua embedding, return similarity score
 //
 // Cara pakai di main.go:
 //   engine := face.NewInsightFaceEngine("http://localhost:8001")
-//   faceService := &face.Service{Repo: faceRepo, Engine: engine}
 // ─────────────────────────────────────────
 
-// InsightFaceEngine — implementasi FaceEngine via HTTP ke Python microservice
 type InsightFaceEngine struct {
-	ServiceURL string // contoh: "http://localhost:8001"
+	ServiceURL string
 	httpClient *http.Client
 }
 
-// NewInsightFaceEngine — buat instance InsightFaceEngine
 func NewInsightFaceEngine(serviceURL string) *InsightFaceEngine {
 	return &InsightFaceEngine{
 		ServiceURL: serviceURL,
@@ -140,44 +66,78 @@ func NewInsightFaceEngine(serviceURL string) *InsightFaceEngine {
 	}
 }
 
-// insightCompareResponse — response JSON dari Python service
-type insightCompareResponse struct {
+// detectResponse — struktur JSON dari Python /detect
+type detectResponse struct {
+	Detected  bool      `json:"detected"`
+	FaceCount int       `json:"face_count"`
+	Embedding []float64 `json:"embedding"`
+	Error     string    `json:"error,omitempty"`
+}
+
+// DetectAndEmbed — kirim base64 ke Python, dapatkan embedding
+func (e *InsightFaceEngine) DetectAndEmbed(imageBase64 string) ([]float64, int, error) {
+	// ✦ DIUBAH: dari multipart/file ke JSON body dengan base64
+	// Alasan: Python service kita sudah didesain terima base64,
+	// lebih sederhana dan tidak perlu handle multipart di Python
+	payload := map[string]string{"image": imageBase64}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gagal encode payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", e.ServiceURL+"/detect", bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gagal hubungi face engine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	var result detectResponse
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		return nil, 0, fmt.Errorf("gagal parse response engine: %w", err)
+	}
+	if result.Error != "" {
+		return nil, result.FaceCount, fmt.Errorf("face engine: %s", result.Error)
+	}
+
+	return result.Embedding, result.FaceCount, nil
+}
+
+// compareRequest — struktur JSON untuk Python /compare
+type compareRequest struct {
+	EmbeddingNew    []float64 `json:"embedding_new"`
+	EmbeddingStored []float64 `json:"embedding_stored"`
+}
+
+// compareResponse — struktur JSON dari Python /compare
+type compareResponse struct {
 	Similarity float64 `json:"similarity"`
-	FaceCount  int     `json:"face_count"`
+	Match      bool    `json:"match"`
 	Error      string  `json:"error,omitempty"`
 }
 
-// Compare — kirim dua gambar ke Python InsightFace service
-// Python service jalankan model ArcFace dan return similarity score
-func (e *InsightFaceEngine) Compare(inputImage []byte, referencePath string) (float64, error) {
-	refBytes, err := os.ReadFile(referencePath)
+// CompareEmbeddings — kirim dua embedding ke Python, dapatkan similarity score
+func (e *InsightFaceEngine) CompareEmbeddings(embeddingNew []float64, embeddingStored []float64) (float64, error) {
+	payload := compareRequest{
+		EmbeddingNew:    embeddingNew,
+		EmbeddingStored: embeddingStored,
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, fmt.Errorf("gagal baca foto referensi: %w", err)
+		return 0, fmt.Errorf("gagal encode payload: %w", err)
 	}
 
-	// Build multipart form dengan dua field: input_image dan reference_image
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-
-	inputPart, err := writer.CreateFormFile("input_image", "input.jpg")
-	if err != nil {
-		return 0, err
-	}
-	inputPart.Write(inputImage)
-
-	refPart, err := writer.CreateFormFile("reference_image", "reference.jpg")
+	req, err := http.NewRequest("POST", e.ServiceURL+"/compare", bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
-	refPart.Write(refBytes)
-
-	writer.Close()
-
-	req, err := http.NewRequest("POST", e.ServiceURL+"/compare", body)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
@@ -186,57 +146,42 @@ func (e *InsightFaceEngine) Compare(inputImage []byte, referencePath string) (fl
 	defer resp.Body.Close()
 
 	respBytes, _ := io.ReadAll(resp.Body)
-	var result insightCompareResponse
+	var result compareResponse
 	if err := json.Unmarshal(respBytes, &result); err != nil {
 		return 0, fmt.Errorf("gagal parse response engine: %w", err)
 	}
-
 	if result.Error != "" {
-		return 0, fmt.Errorf("face engine error: %s", result.Error)
+		return 0, fmt.Errorf("face engine: %s", result.Error)
 	}
 
 	return result.Similarity, nil
 }
 
-// insightDetectResponse — response JSON dari Python service untuk deteksi
-type insightDetectResponse struct {
-	FaceCount int    `json:"face_count"`
-	Error     string `json:"error,omitempty"`
+// ─────────────────────────────────────────
+// MockEngine — untuk testing tanpa Python service
+//
+// Cara pakai di development:
+//   engine := face.NewMockEngine(0.85) // selalu return 0.85 similarity
+// ─────────────────────────────────────────
+
+type MockEngine struct {
+	FixedSimilarity float64
+	FixedFaceCount  int
 }
 
-// DetectFace — kirim gambar ke Python service untuk hitung jumlah wajah
-func (e *InsightFaceEngine) DetectFace(image []byte) (int, error) {
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+func NewMockEngine(similarity float64) *MockEngine {
+	return &MockEngine{FixedSimilarity: similarity, FixedFaceCount: 1}
+}
 
-	part, err := writer.CreateFormFile("image", "face.jpg")
-	if err != nil {
-		return 0, err
+func (m *MockEngine) DetectAndEmbed(imageBase64 string) ([]float64, int, error) {
+	// Return embedding dummy 512 dimensi semua bernilai 0.1
+	embedding := make([]float64, 512)
+	for i := range embedding {
+		embedding[i] = 0.1
 	}
-	part.Write(image)
-	writer.Close()
+	return embedding, m.FixedFaceCount, nil
+}
 
-	req, err := http.NewRequest("POST", e.ServiceURL+"/detect", body)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("gagal hubungi face engine: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(resp.Body)
-	var result insightDetectResponse
-	if err := json.Unmarshal(respBytes, &result); err != nil {
-		return 0, fmt.Errorf("gagal parse response engine: %w", err)
-	}
-
-	if result.Error != "" {
-		return 0, fmt.Errorf("face engine error: %s", result.Error)
-	}
-
-	return result.FaceCount, nil
+func (m *MockEngine) CompareEmbeddings(embeddingNew []float64, embeddingStored []float64) (float64, error) {
+	return m.FixedSimilarity, nil
 }

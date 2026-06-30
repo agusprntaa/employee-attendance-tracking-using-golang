@@ -2,6 +2,7 @@ package face
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -14,56 +15,175 @@ type Repository struct {
 // ─────────────────────────────────────────
 
 type FaceToken struct {
-	ID         int
-	EmployeeID int
-	Token      string
-	ExpiresAt  time.Time
-	IsUsed     bool
-
+	ID              int
+	EmployeeID      int
+	Token           string
+	ExpiresAt       time.Time
+	IsUsed          bool
 	FaceVerified    bool
 	ConfidenceScore float64
-	VerifiedAt      *time.Time
+}
+
+// PoseEmbedding — satu baris embedding dengan label pose-nya
+type PoseEmbedding struct {
+	Pose      string
+	Embedding []float64
+}
+
+// EmployeeFaceData — data dasar karyawan untuk proses checkin
+type EmployeeFaceData struct {
+	FaceRegistered bool
+	BranchID       int
+}
+
+type EventData struct {
+	ID          int
+	Name        string
+	Latitude    float64
+	Longitude   float64
+	RadiusMeter int
+	BranchID    int
 }
 
 // ─────────────────────────────────────────
-// FACE REFERENCE — baca/tulis dari kolom employees
-//
-// Tidak ada tabel employee_faces terpisah.
-// face_reference_path dan face_registered hidup di tabel employees.
-// Package face hanya baca/tulis dua kolom ini, sisanya urusan package lain.
+// EMPLOYEE FACE DATA (dasar, tanpa embedding)
 // ─────────────────────────────────────────
 
-// GetFaceReference — ambil path foto referensi dan status pendaftaran
-// Return: path string, registered bool, err
-// path kosong ("") berarti belum daftar wajah
-// Hanya ambil apa yang face module butuhkan
-func (r *Repository) GetFaceReference(employeeID int) (path string, registered bool, err error) {
-	var nullPath sql.NullString
-	err = r.DB.QueryRow(`
-        SELECT COALESCE(face_reference_path, ''), COALESCE(face_registered, false)
-        FROM employees WHERE id = $1
-    `, employeeID).Scan(&nullPath, &registered)
-	path = nullPath.String
-	return
+// GetEmployeeFaceData — ambil status registrasi + branch_id saja
+// Embedding TIDAK diambil di sini — pakai GetAllPoseEmbeddings terpisah
+// karena sekarang ada 5 baris, bukan 1 kolom.
+func (r *Repository) GetEmployeeFaceData(employeeID int) (*EmployeeFaceData, error) {
+	var (
+		faceRegistered bool
+		branchID       sql.NullInt64
+	)
+	err := r.DB.QueryRow(`
+		SELECT face_registered, branch_id
+		FROM employees
+		WHERE id = $1
+	`, employeeID).Scan(&faceRegistered, &branchID)
+	if err != nil {
+		return nil, err
+	}
+	return &EmployeeFaceData{
+		FaceRegistered: faceRegistered,
+		BranchID:       int(branchID.Int64),
+	}, nil
 }
 
-func (r *Repository) UpdateFaceReference(employeeID int, path string) error {
+// MarkFaceRegistered — set flag setelah semua 5 pose berhasil disimpan
+// Dipanggil terpisah dari SavePoseEmbedding agar flag hanya true
+// jika SEMUA pose sukses (dipanggil di akhir, setelah loop 5 pose selesai)
+func (r *Repository) MarkFaceRegistered(employeeID int) error {
 	_, err := r.DB.Exec(`
-        UPDATE employees
-        SET face_reference_path = $1,
-            face_registered     = true,
-            face_registered_at  = NOW()
-        WHERE id = $2
-    `, path, employeeID)
+		UPDATE employees
+		SET face_registered    = true,
+		    face_registered_at = NOW()
+		WHERE id = $1
+	`, employeeID)
 	return err
+}
+
+// ─────────────────────────────────────────
+// POSE EMBEDDINGS — tabel baru employee_face_embeddings
+// ─────────────────────────────────────────
+
+// SavePoseEmbedding — simpan satu embedding untuk satu pose
+// Pakai ON CONFLICT supaya re-register otomatis replace pose yang sama,
+// tidak perlu DELETE manual dulu.
+func (r *Repository) SavePoseEmbedding(employeeID int, pose string, embedding []float64) error {
+	embeddingJSON, err := json.Marshal(embedding)
+	if err != nil {
+		return err
+	}
+	_, err = r.DB.Exec(`
+		INSERT INTO employee_face_embeddings (employee_id, pose, embedding)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (employee_id, pose) DO UPDATE
+		SET embedding  = EXCLUDED.embedding,
+		    created_at = NOW()
+	`, employeeID, pose, string(embeddingJSON))
+	return err
+}
+
+// GetAllPoseEmbeddings — ambil kelima embedding milik satu karyawan
+// Dipakai saat verify-face: loop bandingkan satu-satu ke embedding baru
+func (r *Repository) GetAllPoseEmbeddings(employeeID int) ([]PoseEmbedding, error) {
+	rows, err := r.DB.Query(`
+		SELECT pose, embedding
+		FROM employee_face_embeddings
+		WHERE employee_id = $1
+	`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []PoseEmbedding
+	for rows.Next() {
+		var pose, embeddingJSON string
+		if err := rows.Scan(&pose, &embeddingJSON); err != nil {
+			return nil, err
+		}
+		var emb []float64
+		if err := json.Unmarshal([]byte(embeddingJSON), &emb); err != nil {
+			return nil, err
+		}
+		result = append(result, PoseEmbedding{Pose: pose, Embedding: emb})
+	}
+	return result, rows.Err()
+}
+
+// GetRegisteredPoses — list nama pose yang sudah tersimpan (untuk FaceStatus)
+func (r *Repository) GetRegisteredPoses(employeeID int) ([]string, error) {
+	rows, err := r.DB.Query(`
+		SELECT pose FROM employee_face_embeddings
+		WHERE employee_id = $1
+		ORDER BY pose
+	`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var poses []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		poses = append(poses, p)
+	}
+	return poses, rows.Err()
+}
+
+// DeleteAllPoseEmbeddings — hapus semua pose milik karyawan
+// Dipakai kalau registrasi gagal di tengah jalan (rollback manual)
+// atau admin reset wajah karyawan
+func (r *Repository) DeleteAllPoseEmbeddings(employeeID int) error {
+	_, err := r.DB.Exec(`
+		DELETE FROM employee_face_embeddings WHERE employee_id = $1
+	`, employeeID)
+	return err
+}
+
+// ─────────────────────────────────────────
+// BRANCHES
+// ─────────────────────────────────────────
+
+func (r *Repository) GetBranchLocation(branchID int) (lat, lon float64, radiusMeter int, err error) {
+	err = r.DB.QueryRow(`
+		SELECT latitude, longitude, radius_meter
+		FROM branches
+		WHERE id = $1
+	`, branchID).Scan(&lat, &lon, &radiusMeter)
+	return
 }
 
 // ─────────────────────────────────────────
 // FACE TOKEN
 // ─────────────────────────────────────────
 
-// InsertFaceToken — simpan token baru TTL 2 menit
-// Trigger DB akan auto-cleanup token expired lama milik employee ini
 func (r *Repository) InsertFaceToken(employeeID int, token string) error {
 	_, err := r.DB.Exec(`
 		INSERT INTO face_tokens (employee_id, token, expires_at, is_used)
@@ -72,54 +192,34 @@ func (r *Repository) InsertFaceToken(employeeID int, token string) error {
 	return err
 }
 
-// GetFaceToken — ambil token, validasi dilakukan di service
-// Return nil jika token tidak ditemukan
 func (r *Repository) GetFaceToken(token string, employeeID int) (*FaceToken, error) {
-
 	var ft FaceToken
-
 	err := r.DB.QueryRow(`
-		SELECT
-			id,
-			employee_id,
-			token,
-			expires_at,
-			is_used,
-			face_verified,
-			COALESCE(confidence_score,0)
+		SELECT id, employee_id, token, expires_at, is_used,
+		       face_verified, COALESCE(confidence_score, 0)
 		FROM face_tokens
-		WHERE token = $1
-		AND employee_id = $2
-	`,
-		token,
-		employeeID,
-	).Scan(
-		&ft.ID,
-		&ft.EmployeeID,
-		&ft.Token,
-		&ft.ExpiresAt,
-		&ft.IsUsed,
-		&ft.FaceVerified,
-		&ft.ConfidenceScore,
+		WHERE token = $1 AND employee_id = $2
+	`, token, employeeID).Scan(
+		&ft.ID, &ft.EmployeeID, &ft.Token, &ft.ExpiresAt,
+		&ft.IsUsed, &ft.FaceVerified, &ft.ConfidenceScore,
 	)
-
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-
 	if err != nil {
 		return nil, err
 	}
-
 	return &ft, nil
 }
 
-// MarkTokenUsed — invalidate token dalam transaksi DB
-// Wajib dipanggil bersama InsertAttendanceWithFace dalam 1 tx
-func (r *Repository) MarkTokenUsed(tx *sql.Tx, tokenID int) error {
-	_, err := tx.Exec(`
-		UPDATE face_tokens SET is_used = true WHERE id = $1
-	`, tokenID)
+func (r *Repository) MarkFaceVerified(tokenID int, score float64) error {
+	_, err := r.DB.Exec(`
+		UPDATE face_tokens
+		SET face_verified    = true,
+		    confidence_score = $2,
+		    verified_at      = NOW()
+		WHERE id = $1
+	`, tokenID, score)
 	return err
 }
 
@@ -127,8 +227,9 @@ func (r *Repository) MarkTokenUsed(tx *sql.Tx, tokenID int) error {
 // VERIFICATION LOG
 // ─────────────────────────────────────────
 
-// CountDailyFailures — hitung percobaan mismatch hari ini
-// Dipakai sebelum proses gambar untuk cek MAX_ATTEMPT_EXCEEDED
+// CountDailyFailures — ✦ FIXED: typo "missmatch" → "mismatch"
+// Bug lama: query selalu return 0 karena tidak pernah ada baris dengan
+// result = 'missmatch' (dobel-s), padahal InsertVerificationLog insert 'mismatch'.
 func (r *Repository) CountDailyFailures(employeeID int) (int, error) {
 	var count int
 	err := r.DB.QueryRow(`
@@ -140,57 +241,40 @@ func (r *Repository) CountDailyFailures(employeeID int) (int, error) {
 	return count, err
 }
 
-// InsertVerificationLog — catat hasil verifikasi (selalu, berhasil maupun gagal)
-// tx = nil → pakai DB langsung (kasus mismatch, tidak dalam transaksi)
-// tx != nil → pakai transaksi (kasus match, bersama insert attendance)
+// InsertVerificationLog — ✦ FIXED: ditulis ulang bersih, tanpa karakter aneh
+// Bug lama: ada karakter tersembunyi (kemungkinan dari copy-paste) yang
+// menyebabkan "syntax error at or near %". Query di bawah ini sudah
+// diketik ulang dari nol memakai backtick string biasa, tanpa style
+// indentasi rawan yang sebelumnya menimbulkan masalah.
 func (r *Repository) InsertVerificationLog(
 	tx *sql.Tx,
-	employeeID, attendanceID int,
+	employeeID int,
+	attendanceID int,
 	result string,
 	score float64,
 	ipAddress string,
 ) error {
+	const query = "INSERT INTO face_verification_logs (employee_id, attendance_id, result, confidence_score, ip_address) VALUES ($1, $2, $3, $4, $5)"
+
 	var attendanceVal interface{}
 	if attendanceID > 0 {
 		attendanceVal = attendanceID
+	} else {
+		attendanceVal = nil
 	}
 
-	q := `
-		INSERT INTO face_verification_logs
-			(employee_id, attendance_id, result, confidence_score, ip_address)
-		VALUES ($1, $2, $3, $4, $5)
-	`
 	if tx != nil {
-		_, err := tx.Exec(q, employeeID, attendanceVal, result, score, ipAddress)
+		_, err := tx.Exec(query, employeeID, attendanceVal, result, score, ipAddress)
 		return err
 	}
-	_, err := r.DB.Exec(q, employeeID, attendanceVal, result, score, ipAddress)
+	_, err := r.DB.Exec(query, employeeID, attendanceVal, result, score, ipAddress)
 	return err
 }
 
 // ─────────────────────────────────────────
-// ATTENDANCE (dalam transaksi)
+// ATTENDANCE
 // ─────────────────────────────────────────
 
-// InsertAttendanceWithFace — INSERT attendance dengan face_verified=true
-// Harus dalam transaksi bersama MarkTokenUsed dan InsertVerificationLog
-func (r *Repository) InsertAttendanceWithFace(
-	tx *sql.Tx,
-	employeeID int,
-	score float64,
-) (int, error) {
-	var id int
-	err := tx.QueryRow(`
-		INSERT INTO attendance
-			(employee_id, date, check_in, face_verified, confidence_score)
-		VALUES ($1, CURRENT_DATE, NOW(), true, $2)
-		RETURNING id
-	`, employeeID, score).Scan(&id)
-	return id, err
-}
-
-// HasCheckedInToday — cek sudah checkin hari ini
-// Dipanggil saat generate face-token untuk early return sebelum proses apapun
 func (r *Repository) HasCheckedInToday(employeeID int) (bool, error) {
 	var count int
 	err := r.DB.QueryRow(`
@@ -200,65 +284,122 @@ func (r *Repository) HasCheckedInToday(employeeID int) (bool, error) {
 	return count > 0, err
 }
 
-func (r *Repository) MarkFaceVerified(
-	tokenID int,
+func (r *Repository) InsertFaceCheckin(
+	tx *sql.Tx,
+	employeeID, branchID int,
+	lat, lon, distanceMeter float64,
+	lateMinutes int,
+	status string,
 	score float64,
-) error {
+) (attendanceID int, err error) {
+	const query = `
+		INSERT INTO attendance (
+			employee_id, branch_id, date,
+			check_in, check_in_lat, check_in_lon,
+			distance_meter, late_minutes, status,
+			face_verified, confidence_score, face_method,
+			checkin_type, work_type
+		) VALUES (
+			$1, $2, CURRENT_DATE,
+			NOW(), $3, $4,
+			$5, $6, $7,
+			true, $8, 'insightface',
+			'face_geo', 'WFO'
+		)
+		RETURNING id
+	`
+	err = tx.QueryRow(query, employeeID, branchID, lat, lon,
+		distanceMeter, lateMinutes, status, score,
+	).Scan(&attendanceID)
+	return
+}
 
-	_, err := r.DB.Exec(`
-		UPDATE face_tokens
-		SET
-			face_verified = TRUE,
-			confidence_score = $2,
-			verified_at = NOW()
-		WHERE id = $1
-	`,
-		tokenID,
-		score,
-	)
-
+func (r *Repository) MarkTokenConsumed(tx *sql.Tx, tokenID int) error {
+	_, err := tx.Exec(`UPDATE face_tokens SET is_used = true WHERE id = $1`, tokenID)
 	return err
 }
 
-func (r *Repository) IsFaceVerified(
-	employeeID int,
-	token string,
-) (bool, error) {
+// ─────────────────────────────────────────
+// QR EVENT
+// ─────────────────────────────────────────
 
-	var verified bool
-
+func (r *Repository) GetQRTokenByValue(token string) (*struct {
+	ID        int
+	EventID   int
+	BranchID  int
+	ExpiresAt time.Time
+	TokenType string
+}, error) {
+	var t struct {
+		ID        int
+		EventID   int
+		BranchID  int
+		ExpiresAt time.Time
+		TokenType string
+	}
+	var eventID sql.NullInt64
 	err := r.DB.QueryRow(`
-		SELECT face_verified
-FROM face_tokens
-WHERE employee_id = $1
-AND token = $2
-AND expires_at > NOW()
-AND is_used = false
-AND face_verified = true
-	`, employeeID, token).Scan(
-		&verified,
-	)
-
+		SELECT id, COALESCE(event_id, 0), branch_id, expires_at, token_type
+		FROM qr_tokens
+		WHERE token = $1
+	`, token).Scan(&t.ID, &eventID, &t.BranchID, &t.ExpiresAt, &t.TokenType)
 	if err == sql.ErrNoRows {
-		return false, nil
+		return nil, nil
 	}
-
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-
-	return verified, nil
+	t.EventID = int(eventID.Int64)
+	return &t, nil
 }
 
-func (r *Repository) ConsumeFaceToken(
-	token string,
-) error {
+func (r *Repository) GetEventData(eventID int) (*EventData, error) {
+	var e EventData
+	var lat, lon sql.NullFloat64
+	var radius sql.NullInt64
+	err := r.DB.QueryRow(`
+		SELECT id, name, latitude, longitude, radius_meter, branch_id
+		FROM events
+		WHERE id = $1
+	`, eventID).Scan(&e.ID, &e.Name, &lat, &lon, &radius, &e.BranchID)
+	if err != nil {
+		return nil, err
+	}
+	e.Latitude = lat.Float64
+	e.Longitude = lon.Float64
+	e.RadiusMeter = int(radius.Int64)
+	return &e, nil
+}
 
-	_, err := r.DB.Exec(`
-		UPDATE face_tokens
-		SET is_used = true
-		WHERE token = $1
-	`, token)
+func (r *Repository) HasAttendedEvent(employeeID, eventID int) (bool, error) {
+	var count int
+	err := r.DB.QueryRow(`
+		SELECT COUNT(*) FROM attendance
+		WHERE employee_id = $1 AND event_id = $2
+	`, employeeID, eventID).Scan(&count)
+	return count > 0, err
+}
 
-	return err
+func (r *Repository) UpsertQREventCheckin(
+	employeeID, branchID, eventID int,
+	lat, lon, distanceMeter float64,
+) (attendanceID int, err error) {
+	err = r.DB.QueryRow(`
+		INSERT INTO attendance (
+			employee_id, branch_id, date,
+			check_in, check_in_lat, check_in_lon,
+			distance_meter, status, checkin_type,
+			work_type, event_id
+		) VALUES (
+			$1, $2, CURRENT_DATE,
+			NOW(), $3, $4,
+			$5, 'PRESENT', 'qr_event',
+			'WFO', $6
+		)
+		ON CONFLICT (employee_id, date) DO UPDATE
+		SET event_id     = EXCLUDED.event_id,
+		    checkin_type = 'qr_event'
+		RETURNING id
+	`, employeeID, branchID, lat, lon, distanceMeter, eventID).Scan(&attendanceID)
+	return
 }
