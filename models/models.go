@@ -278,7 +278,7 @@ type ScheduleResponse struct {
 }
 
 //─── LEAVE (CUTI) ────────────────────────────────────────────────────────────
- 
+
 // LeaveQuota — kuota cuti karyawan per tahun
 type LeaveQuota struct {
 	ID         int `json:"id"`
@@ -288,7 +288,7 @@ type LeaveQuota struct {
 	Used       int `json:"used"`
 	Remaining  int `json:"remaining"` // computed: total - used
 }
- 
+
 // LeaveRequest — pengajuan cuti karyawan
 type LeaveRequest struct {
 	ID           int     `json:"id"`
@@ -304,16 +304,16 @@ type LeaveRequest struct {
 	Note         *string `json:"note,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 }
- 
+
 // PublicHoliday — hari libur nasional
 type PublicHoliday struct {
-    ID          int    `json:"id"`
-    Date        string `json:"date"`
-    Name        string `json:"name"`
-    Description string `json:"description"`
-    Category    string `json:"category"`
+	ID          int    `json:"id"`
+	Date        string `json:"date"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
 }
- 
+
 // LeaveSummary — statistik kartu atas UI
 type LeaveSummary struct {
 	TotalRequests int `json:"total_requests"`
@@ -321,22 +321,22 @@ type LeaveSummary struct {
 	Approved      int `json:"approved"`
 	Rejected      int `json:"rejected"`
 }
- 
+
 // UpdateLeaveStatusRequest — untuk approve/reject pengajuan cuti
 type UpdateLeaveStatusRequest struct {
 	Status string  `json:"status"` // "approved" atau "rejected"
 	Note   *string `json:"note"`   // opsional, catatan admin
 }
- 
+
 // UpdateLeaveQuotaRequest — set kuota manual oleh admin
 type UpdateLeaveQuotaRequest struct {
 	Total int `json:"total"`
 }
- 
+
 // CreateHolidayRequest — tambah hari libur nasional
 type CreateHolidayRequest struct {
-    Date        string `json:"date"`
-    Name        string `json:"name"`
-    Description string `json:"description"`
-    Category    string `json:"category"` // <-- Wajib ditambahkan di file model Anda
+	Date        string `json:"date"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
 }
