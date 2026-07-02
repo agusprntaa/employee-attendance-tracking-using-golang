@@ -42,6 +42,9 @@ var (
 	ErrQRNotEventType       = errors.New("QR_NOT_EVENT_TYPE")
 	ErrIncompletePoses      = errors.New("INCOMPLETE_POSES")
 	ErrPoseInvalid          = errors.New("POSE_INVALID")
+	ErrNotEventParticipant  = errors.New("NOT_EVENT_PARTICIPANT")
+	ErrEventNotFound        = errors.New("EVENT_NOT_FOUND")
+	ErrEventExpired         = errors.New("EVENT_EXPIRED")
 )
 
 // ─────────────────────────────────────────
@@ -151,10 +154,12 @@ func (s *Service) RegisterFace(
 			return nil, ErrEngineError
 		}
 		if faceCount == 0 {
-			return nil, fmt.Errorf("NO_FACE_DETECTED_%s", pose) // pose mana yang gagal
+			// ✦ DIUBAH: pakai %w supaya errors.Is(err, ErrNoFaceDetected) di handler tetap match,
+			// sambil tetap nyimpen info pose mana yang gagal di pesan errornya.
+			return nil, fmt.Errorf("%w: pose %s", ErrNoFaceDetected, pose)
 		}
 		if faceCount > 1 {
-			return nil, fmt.Errorf("MULTIPLE_FACES_%s", pose)
+			return nil, fmt.Errorf("%w: pose %s", ErrMultipleFaces, pose)
 		}
 
 		embeddings[pose] = embedding
@@ -220,7 +225,7 @@ func (s *Service) GenerateFaceToken(employeeID int) (*FaceTokenResponse, error) 
 		return nil, ErrFaceNotRegistered
 	}
 
-	alreadyIn, err := s.Repo.HasCheckedInToday(employeeID)
+	alreadyIn, err := s.Repo.HasCheckedInWFOToday(employeeID) // ← DIUBAH
 	if err != nil {
 		return nil, err
 	}
@@ -441,6 +446,25 @@ func (s *Service) CheckinQREvent(
 	ipAddress string,
 ) (*CheckinQRResponse, error) {
 
+	// 1. Validasi face_token — harus token bertipe EVENT & sudah verified
+	ft, err := s.Repo.GetFaceToken(req.FaceToken, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if ft == nil || ft.EventID == nil {
+		return nil, ErrTokenInvalid
+	}
+	if ft.IsUsed {
+		return nil, ErrTokenUsed
+	}
+	if time.Now().After(ft.ExpiresAt) {
+		return nil, ErrTokenExpired
+	}
+	if !ft.FaceVerified {
+		return nil, ErrTokenNotVerified
+	}
+
+	// 2. Validasi QR token
 	qt, err := s.Repo.GetQRTokenByValue(req.QRToken)
 	if err != nil {
 		return nil, err
@@ -454,17 +478,22 @@ func (s *Service) CheckinQREvent(
 	if time.Now().After(qt.ExpiresAt) {
 		return nil, ErrQRTokenInvalid
 	}
+	// QR yang discan HARUS untuk event yang sama dengan face_token
+	if qt.EventID != *ft.EventID {
+		return nil, ErrQRTokenInvalid
+	}
 
+	// 3. Validasi geolocation
 	event, err := s.Repo.GetEventData(qt.EventID)
 	if err != nil {
 		return nil, err
 	}
-
 	distance := haversineMeters(req.Latitude, req.Longitude, event.Latitude, event.Longitude)
 	if distance > float64(event.RadiusMeter) {
 		return nil, ErrOutsideRadius
 	}
 
+	// 4. Defense-in-depth: cek belum pernah absen (garis akhir tetap unique index DB)
 	attended, err := s.Repo.HasAttendedEvent(employeeID, event.ID)
 	if err != nil {
 		return nil, err
@@ -473,11 +502,27 @@ func (s *Service) CheckinQREvent(
 		return nil, ErrAlreadyAttendedEvent
 	}
 
-	attendanceID, err := s.Repo.UpsertQREventCheckin(
-		employeeID, event.BranchID, event.ID,
-		req.Latitude, req.Longitude, distance,
+	// 5. Insert + consume token, dalam 1 transaksi
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	attendanceID, err := s.Repo.InsertEventCheckin(
+		tx, employeeID, event.ID, event.BranchID,
+		req.Latitude, req.Longitude, distance, ft.ConfidenceScore,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.Repo.MarkTokenConsumed(tx, ft.ID); err != nil {
+		return nil, err
+	}
+	if err := s.Repo.InsertVerificationLog(tx, employeeID, attendanceID, "checkin_event", ft.ConfidenceScore, ipAddress); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -487,4 +532,74 @@ func (s *Service) CheckinQREvent(
 		Date:         time.Now().Format("2006-01-02"),
 		CheckinTime:  time.Now().Format("15:04:05"),
 	}, nil
+}
+
+func (s *Service) GenerateEventFaceToken(employeeID, eventID int) (*FaceTokenResponse, error) {
+	// 1. Karyawan harus punya wajah terdaftar (sama seperti WFO)
+	data, err := s.Repo.GetEmployeeFaceData(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if !data.FaceRegistered {
+		return nil, ErrFaceNotRegistered
+	}
+
+	// 2. Whitelist check
+	isParticipant, err := s.Repo.IsEventParticipant(employeeID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if !isParticipant {
+		return nil, ErrNotEventParticipant
+	}
+
+	// 3. Event masih aktif hari ini
+	event, err := s.Repo.GetEventData(eventID)
+	if err == sql.ErrNoRows {
+		return nil, ErrEventNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if event.Date.Format("2006-01-02") != now.Format("2006-01-02") || now.After(event.ExpiresAt) {
+		return nil, ErrEventExpired
+	}
+
+	// 4. Belum pernah absen event ini
+	attended, err := s.Repo.HasAttendedEvent(employeeID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if attended {
+		return nil, ErrAlreadyAttendedEvent
+	}
+
+	// 5. Generate token, simpan dengan event_id
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("gagal generate token: %w", err)
+	}
+	token := hex.EncodeToString(b)
+
+	if err := s.Repo.InsertEventFaceToken(employeeID, eventID, token); err != nil {
+		return nil, err
+	}
+
+	return &FaceTokenResponse{FaceToken: token, ExpiresIn: FaceTokenTTL}, nil
+}
+
+// ─────────────────────────────────────────
+// GetActiveEventsToday
+// ─────────────────────────────────────────
+
+func (s *Service) GetActiveEventsToday(employeeID int) ([]EventListItem, error) {
+	events, err := s.Repo.GetActiveEventsForEmployee(employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if events == nil {
+		events = []EventListItem{}
+	}
+	return events, nil
 }

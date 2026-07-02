@@ -1,6 +1,7 @@
 package face
 
 import (
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"strings"
@@ -13,42 +14,58 @@ type Handler struct {
 }
 
 // errorMessage — mapping error ke HTTP status + kode + pesan user-friendly
+//
+// ✦ DIUBAH: dari `switch err { case ErrX: }` (exact identity match)
+// menjadi `switch { case errors.Is(err, ErrX): }`.
+//
+// Alasan: RegisterFace di service.go membungkus sentinel error dengan
+// fmt.Errorf("%w: pose %s", ErrNoFaceDetected, pose) supaya bisa nunjukin
+// pose mana yang gagal. Hasil fmt.Errorf("%w", ...) itu OBJEK BARU,
+// beda instance dari sentinel var — switch-case biasa (==) tidak akan
+// pernah match, selalu jatuh ke default (500 generic).
+// errors.Is() menelusuri chain %w sehingga tetap match ke sentinel-nya.
 func errorMessage(err error) (int, string, string) {
-	switch err {
-	case ErrAlreadyCheckedIn:
+	switch {
+	case errors.Is(err, ErrAlreadyCheckedIn):
 		return 400, "ALREADY_CHECKED_IN", "Kamu sudah checkin hari ini"
-	case ErrFaceNotRegistered:
+	case errors.Is(err, ErrFaceNotRegistered):
 		return 403, "FACE_NOT_REGISTERED", "Daftarkan wajah dulu sebelum bisa checkin"
-	case ErrTokenInvalid:
+	case errors.Is(err, ErrTokenInvalid):
 		return 400, "TOKEN_INVALID", "Sesi tidak valid, tap Check In lagi"
-	case ErrTokenExpired:
+	case errors.Is(err, ErrTokenExpired):
 		return 400, "TOKEN_EXPIRED", "Waktu habis (2 menit), tap Check In lagi"
-	case ErrTokenUsed:
+	case errors.Is(err, ErrTokenUsed):
 		return 400, "TOKEN_USED", "Token sudah digunakan"
-	case ErrTokenNotVerified:
+	case errors.Is(err, ErrTokenNotVerified):
 		return 400, "TOKEN_NOT_VERIFIED", "Verifikasi wajah dulu sebelum checkin"
-	case ErrFaceMismatch:
+	case errors.Is(err, ErrFaceMismatch):
 		return 401, "FACE_MISMATCH", "Wajah tidak dikenali, coba lagi"
-	case ErrMaxAttemptExceeded:
+	case errors.Is(err, ErrMaxAttemptExceeded):
 		return 429, "MAX_ATTEMPT_EXCEEDED", "Terlalu banyak percobaan gagal, hubungi HR"
-	case ErrNoFaceDetected:
-		return 400, "NO_FACE_DETECTED", "Tidak ada wajah terdeteksi, foto ulang"
-	case ErrMultipleFaces:
-		return 400, "MULTIPLE_FACES", "Foto hanya boleh satu wajah"
-	case ErrEngineError:
+	case errors.Is(err, ErrNoFaceDetected):
+		return 400, "NO_FACE_DETECTED", "Tidak ada wajah terdeteksi, foto ulang (" + err.Error() + ")"
+	case errors.Is(err, ErrMultipleFaces):
+		return 400, "MULTIPLE_FACES", "Foto hanya boleh satu wajah (" + err.Error() + ")"
+	case errors.Is(err, ErrEngineError):
 		return 500, "ENGINE_ERROR", "Sistem verifikasi bermasalah, coba lagi"
-	case ErrOutsideRadius:
+	case errors.Is(err, ErrOutsideRadius):
 		return 400, "OUTSIDE_RADIUS", "Kamu berada di luar area yang diizinkan"
-	case ErrAlreadyAttendedEvent:
+	case errors.Is(err, ErrAlreadyAttendedEvent):
 		return 409, "ALREADY_ATTENDED_EVENT", "Kamu sudah absen di event ini"
-	case ErrQRTokenInvalid:
+	case errors.Is(err, ErrQRTokenInvalid):
 		return 400, "QR_TOKEN_INVALID", "QR Code tidak valid atau sudah kadaluarsa"
-	case ErrQRNotEventType:
+	case errors.Is(err, ErrQRNotEventType):
 		return 400, "QR_NOT_EVENT_TYPE", "QR Code ini bukan untuk absen event"
-	case ErrIncompletePoses:
+	case errors.Is(err, ErrIncompletePoses):
 		return 400, "INCOMPLETE_POSES", "Kirim kelima foto: front, left, right, up, down"
-	case ErrPoseInvalid:
+	case errors.Is(err, ErrPoseInvalid):
 		return 400, "POSE_INVALID", "Nama pose tidak dikenali"
+	case errors.Is(err, ErrNotEventParticipant):
+		return 403, "NOT_EVENT_PARTICIPANT", "Kamu tidak terdaftar sebagai peserta event ini"
+	case errors.Is(err, ErrEventNotFound):
+		return 404, "EVENT_NOT_FOUND", "Event tidak ditemukan"
+	case errors.Is(err, ErrEventExpired):
+		return 410, "EVENT_EXPIRED", "Event sudah berakhir atau bukan untuk hari ini"
 	default:
 		return 500, "INTERNAL_ERROR", "Terjadi kesalahan server"
 	}
@@ -264,10 +281,10 @@ func (h *Handler) CheckinQREvent(c *fiber.Ctx) error {
 			"status": "error", "message": "Body tidak valid",
 		})
 	}
-	if req.QRToken == "" || req.Latitude == 0 || req.Longitude == 0 {
+	if req.FaceToken == "" || req.QRToken == "" || req.Latitude == 0 || req.Longitude == 0 {
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
-			"message": "qr_token, latitude, dan longitude wajib diisi",
+			"message": "face_token, qr_token, latitude, dan longitude wajib diisi",
 		})
 	}
 
@@ -281,4 +298,44 @@ func (h *Handler) CheckinQREvent(c *fiber.Ctx) error {
 	return c.Status(201).JSON(fiber.Map{
 		"status": "success", "message": "Absen event berhasil", "data": result,
 	})
+}
+
+// ─────────────────────────────────────────
+// GET /attendance/events/active-today
+// ─────────────────────────────────────────
+
+func (h *Handler) GetActiveEvents(c *fiber.Ctx) error {
+	employeeID := c.Locals("user_id").(int)
+	result, err := h.Service.GetActiveEventsToday(employeeID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"status": "error", "message": "Gagal mengambil daftar event",
+		})
+	}
+	return c.JSON(fiber.Map{"status": "success", "data": result})
+}
+
+// ─────────────────────────────────────────
+// POST /attendance/event/face-token
+// Body: JSON { "event_id": int }
+// ─────────────────────────────────────────
+
+func (h *Handler) GenerateEventFaceToken(c *fiber.Ctx) error {
+	employeeID := c.Locals("user_id").(int)
+
+	var body EventFaceTokenRequest
+	if err := c.BodyParser(&body); err != nil || body.EventID == 0 {
+		return c.Status(400).JSON(fiber.Map{
+			"status": "error", "message": "event_id wajib diisi",
+		})
+	}
+
+	result, err := h.Service.GenerateEventFaceToken(employeeID, body.EventID)
+	if err != nil {
+		status, code, msg := errorMessage(err)
+		return c.Status(status).JSON(fiber.Map{
+			"status": "error", "code": code, "message": msg,
+		})
+	}
+	return c.JSON(fiber.Map{"status": "success", "data": result})
 }

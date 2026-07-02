@@ -22,6 +22,7 @@ type FaceToken struct {
 	IsUsed          bool
 	FaceVerified    bool
 	ConfidenceScore float64
+	EventID         *int // nil = token WFO, terisi = token untuk event ini
 }
 
 // PoseEmbedding — satu baris embedding dengan label pose-nya
@@ -43,6 +44,8 @@ type EventData struct {
 	Longitude   float64
 	RadiusMeter int
 	BranchID    int
+	Date        time.Time
+	ExpiresAt   time.Time
 }
 
 // ─────────────────────────────────────────
@@ -194,20 +197,25 @@ func (r *Repository) InsertFaceToken(employeeID int, token string) error {
 
 func (r *Repository) GetFaceToken(token string, employeeID int) (*FaceToken, error) {
 	var ft FaceToken
+	var eventID sql.NullInt64
 	err := r.DB.QueryRow(`
 		SELECT id, employee_id, token, expires_at, is_used,
-		       face_verified, COALESCE(confidence_score, 0)
+		       face_verified, COALESCE(confidence_score, 0), event_id
 		FROM face_tokens
 		WHERE token = $1 AND employee_id = $2
 	`, token, employeeID).Scan(
 		&ft.ID, &ft.EmployeeID, &ft.Token, &ft.ExpiresAt,
-		&ft.IsUsed, &ft.FaceVerified, &ft.ConfidenceScore,
+		&ft.IsUsed, &ft.FaceVerified, &ft.ConfidenceScore, &eventID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if eventID.Valid {
+		id := int(eventID.Int64)
+		ft.EventID = &id
 	}
 	return &ft, nil
 }
@@ -227,9 +235,6 @@ func (r *Repository) MarkFaceVerified(tokenID int, score float64) error {
 // VERIFICATION LOG
 // ─────────────────────────────────────────
 
-// CountDailyFailures — ✦ FIXED: typo "missmatch" → "mismatch"
-// Bug lama: query selalu return 0 karena tidak pernah ada baris dengan
-// result = 'missmatch' (dobel-s), padahal InsertVerificationLog insert 'mismatch'.
 func (r *Repository) CountDailyFailures(employeeID int) (int, error) {
 	var count int
 	err := r.DB.QueryRow(`
@@ -241,11 +246,6 @@ func (r *Repository) CountDailyFailures(employeeID int) (int, error) {
 	return count, err
 }
 
-// InsertVerificationLog — ✦ FIXED: ditulis ulang bersih, tanpa karakter aneh
-// Bug lama: ada karakter tersembunyi (kemungkinan dari copy-paste) yang
-// menyebabkan "syntax error at or near %". Query di bawah ini sudah
-// diketik ulang dari nol memakai backtick string biasa, tanpa style
-// indentasi rawan yang sebelumnya menimbulkan masalah.
 func (r *Repository) InsertVerificationLog(
 	tx *sql.Tx,
 	employeeID int,
@@ -275,11 +275,11 @@ func (r *Repository) InsertVerificationLog(
 // ATTENDANCE
 // ─────────────────────────────────────────
 
-func (r *Repository) HasCheckedInToday(employeeID int) (bool, error) {
+func (r *Repository) HasCheckedInWFOToday(employeeID int) (bool, error) {
 	var count int
 	err := r.DB.QueryRow(`
 		SELECT COUNT(*) FROM attendance
-		WHERE employee_id = $1 AND date = CURRENT_DATE
+		WHERE employee_id = $1 AND date = CURRENT_DATE AND checkin_type = 'face_geo'
 	`, employeeID).Scan(&count)
 	return count > 0, err
 }
@@ -357,17 +357,19 @@ func (r *Repository) GetEventData(eventID int) (*EventData, error) {
 	var e EventData
 	var lat, lon sql.NullFloat64
 	var radius sql.NullInt64
+	var branchID sql.NullInt64
 	err := r.DB.QueryRow(`
-		SELECT id, name, latitude, longitude, radius_meter, branch_id
+		SELECT id, name, latitude, longitude, radius_meter, branch_id, date, expires_at
 		FROM events
 		WHERE id = $1
-	`, eventID).Scan(&e.ID, &e.Name, &lat, &lon, &radius, &e.BranchID)
+	`, eventID).Scan(&e.ID, &e.Name, &lat, &lon, &radius, &branchID, &e.Date, &e.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
 	e.Latitude = lat.Float64
 	e.Longitude = lon.Float64
 	e.RadiusMeter = int(radius.Int64)
+	e.BranchID = int(branchID.Int64) // 0 kalau NULL
 	return &e, nil
 }
 
@@ -380,26 +382,88 @@ func (r *Repository) HasAttendedEvent(employeeID, eventID int) (bool, error) {
 	return count > 0, err
 }
 
-func (r *Repository) UpsertQREventCheckin(
-	employeeID, branchID, eventID int,
+func (r *Repository) InsertEventCheckin(
+	tx *sql.Tx,
+	employeeID, eventID, branchID int,
 	lat, lon, distanceMeter float64,
+	score float64,
 ) (attendanceID int, err error) {
-	err = r.DB.QueryRow(`
+	var branchVal interface{}
+	if branchID > 0 {
+		branchVal = branchID
+	} else {
+		branchVal = nil // event tanpa cabang spesifik
+	}
+
+	const query = `
 		INSERT INTO attendance (
 			employee_id, branch_id, date,
 			check_in, check_in_lat, check_in_lon,
 			distance_meter, status, checkin_type,
-			work_type, event_id
+			work_type, event_id,
+			face_verified, confidence_score, face_method
 		) VALUES (
 			$1, $2, CURRENT_DATE,
 			NOW(), $3, $4,
 			$5, 'PRESENT', 'qr_event',
-			'WFO', $6
+			'EVENT', $6,
+			true, $7, 'insightface'
 		)
-		ON CONFLICT (employee_id, date) DO UPDATE
-		SET event_id     = EXCLUDED.event_id,
-		    checkin_type = 'qr_event'
 		RETURNING id
-	`, employeeID, branchID, lat, lon, distanceMeter, eventID).Scan(&attendanceID)
+	`
+	err = tx.QueryRow(query, employeeID, branchVal, lat, lon,
+		distanceMeter, eventID, score,
+	).Scan(&attendanceID)
 	return
+}
+
+func (r *Repository) InsertEventFaceToken(employeeID, eventID int, token string) error {
+	_, err := r.DB.Exec(`
+		INSERT INTO face_tokens (employee_id, token, expires_at, is_used, event_id)
+		VALUES ($1, $2, NOW() + INTERVAL '2 minutes', false, $3)
+	`, employeeID, token, eventID)
+	return err
+}
+
+func (r *Repository) IsEventParticipant(eventID, employeeID int) (bool, error) {
+	var count int
+	err := r.DB.QueryRow(`
+		SELECT COUNT(*) FROM event_participants
+		WHERE event_id = $1 AND employee_id = $2
+	`, eventID, employeeID).Scan(&count)
+	return count > 0, err
+}
+
+func (r *Repository) GetActiveEventsForEmployee(employeeID int) ([]EventListItem, error) {
+	rows, err := r.DB.Query(`
+		SELECT e.id, e.name, COALESCE(e. location, ''), e.date,
+		COALESCE(TO_CHAR(e.start_time, 'HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.end_time, 'HH24:MI'), ''),
+		       EXISTS (
+		           SELECT 1 FROM attendance a
+		           WHERE a.employee_id = $1 AND a.event_id = e.id AND a.checkin_type = 'qr_event'
+		       )
+		FROM events e
+		INNER JOIN event_participants ep ON ep.event_id = e.id AND ep.employee_id = $1
+		WHERE e.date = CURRENT_DATE
+		  AND e.expires_at > NOW()
+		ORDER BY e.start_time NULLS LAST
+	`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []EventListItem
+	for rows.Next() {
+		var item EventListItem
+		if err := rows.Scan(
+			&item.EventID, &item.Name, &item.Location, &item.Date,
+			&item.StartTime, &item.EndTime, &item.AlreadyCheckedIn,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }

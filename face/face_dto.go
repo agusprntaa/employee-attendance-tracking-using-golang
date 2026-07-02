@@ -10,7 +10,7 @@ const (
 	// Nilai 0.60 adalah batas aman untuk kondisi lighting/sudut berbeda.
 	// AWS Rekognition pakai skala 0-100, InsightFace pakai 0.0-1.0 — beda skala!
 	DefaultThreshold       = 0.60
-	MaxDailyFailedAttempts = 5
+	MaxDailyFailedAttempts = 10
 	FaceTokenTTL           = 120 // detik
 )
 
@@ -87,6 +87,7 @@ type CheckinResponse struct {
 // CheckinQRRequest — body POST /attendance/checkin-qr
 // endpoint khusus absen QR event luar kantor
 type CheckinQRRequest struct {
+	FaceToken string  `json:"face_token"`
 	QRToken   string  `json:"qr_token"`
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
@@ -98,4 +99,24 @@ type CheckinQRResponse struct {
 	EventName    string `json:"event_name"`
 	Date         string `json:"date"`
 	CheckinTime  string `json:"check_in"`
+}
+
+// ─────────────────────────────────────────
+// EVENT FACE TOKEN
+// ─────────────────────────────────────────
+
+// EventFaceTokenRequest — body POST /attendance/event/face-token
+type EventFaceTokenRequest struct {
+	EventID int `json:"event_id"`
+}
+
+// EventListItem — item di GET /attendance/events/active-today
+type EventListItem struct {
+	EventID          int    `json:"event_id"`
+	Name             string `json:"name"`
+	Location         string `json:"location"`
+	Date             string `json:"date"`
+	StartTime        string `json:"start_time,omitempty"`
+	EndTime          string `json:"end_time,omitempty"`
+	AlreadyCheckedIn string `json:"already_checked_in"`
 }

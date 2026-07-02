@@ -5,6 +5,7 @@ import (
 	"absensi_karyawan/utils"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -91,6 +92,14 @@ func recordToResponse(a *AttendanceRecord) *AttendanceResponse {
 	// Konversi ke WITA di sini agar frontend terima waktu lokal yang benar.
 	if a.CheckIn != nil {
 		t := a.CheckIn.In(utils.WITA)
+		resp.CheckIn = &t
+		fmt.Println("========== RESPONSE ==========")
+		fmt.Println("RAW :", *a.CheckIn)
+		fmt.Println("LOC :", a.CheckIn.Location())
+
+		fmt.Println("WITA:", t)
+		fmt.Println("==============================")
+
 		resp.CheckIn = &t
 	}
 	if a.CheckOut != nil {

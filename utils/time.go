@@ -25,7 +25,7 @@ func init() {
 // Solusi: kirim UTC ke DB, baca kembali sebagai UTC, konversi ke WITA hanya
 // di layer response (recordToResponse).
 func NowWITA() time.Time {
-	return time.Now().UTC()
+	return time.Now()
 }
 
 // TodayDate return tanggal hari ini format YYYY-MM-DD dalam WITA.

@@ -29,7 +29,7 @@ type FaceEngine interface {
 	// Caller (service) yang bertanggung jawab cek faceCount sebelum pakai embedding.
 	DetectAndEmbed(imageBase64 string) (embedding []float64, faceCount int, err error)
 
-	// ComparEmbeddings — hitung cosine similarity antara dua embedding
+	// CompareEmbeddings — hitung cosine similarity antara dua embedding
 	//
 	// embeddingNew    : embedding dari foto yang baru dikirim FE
 	// embeddingStored : embedding yang tersimpan di DB (dari registrasi)
@@ -76,9 +76,6 @@ type detectResponse struct {
 
 // DetectAndEmbed — kirim base64 ke Python, dapatkan embedding
 func (e *InsightFaceEngine) DetectAndEmbed(imageBase64 string) ([]float64, int, error) {
-	// ✦ DIUBAH: dari multipart/file ke JSON body dengan base64
-	// Alasan: Python service kita sudah didesain terima base64,
-	// lebih sederhana dan tidak perlu handle multipart di Python
 	payload := map[string]string{"image": imageBase64}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -97,7 +94,19 @@ func (e *InsightFaceEngine) DetectAndEmbed(imageBase64 string) ([]float64, int, 
 	}
 	defer resp.Body.Close()
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gagal baca response engine: %w", err)
+	}
+
+	// cek status code dulu sebelum parse JSON.
+	// Kalau Python service crash/restart dan reverse-proxy balikin
+	// halaman HTML error (502/504), atau body-nya bukan JSON valid,
+	// ini baru genuine technical error (bukan hasil business logic).
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("face engine status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
 	var result detectResponse
 	if err := json.Unmarshal(respBytes, &result); err != nil {
 		return nil, 0, fmt.Errorf("gagal parse response engine: %w", err)
@@ -145,7 +154,15 @@ func (e *InsightFaceEngine) CompareEmbeddings(embeddingNew []float64, embeddingS
 	}
 	defer resp.Body.Close()
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("gagal baca response engine: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("face engine status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
 	var result compareResponse
 	if err := json.Unmarshal(respBytes, &result); err != nil {
 		return 0, fmt.Errorf("gagal parse response engine: %w", err)

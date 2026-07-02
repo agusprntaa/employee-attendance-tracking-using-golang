@@ -326,6 +326,16 @@ func main() {
 		attendanceHandler.GetHistory,
 	)
 
+	api.Get(
+		"/attendance/events/active-today",
+		faceHandler.GetActiveEvents,
+	)
+
+	api.Post(
+		"/attendance/event/face-token",
+		faceHandler.GenerateEventFaceToken,
+	)
+
 	// ── Leave (Cuti) ─────────────────────────────────────
 	// TAMBAHAN: 6 endpoint baru untuk modul cuti karyawan
 
