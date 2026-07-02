@@ -24,7 +24,6 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 	argIdx := 2
 
 	if search != "" {
-		// Search by name atau username
 		where += fmt.Sprintf(` AND (e.name ILIKE $%d OR e.username ILIKE $%d)`, argIdx, argIdx+1)
 		args = append(args, "%"+search+"%", "%"+search+"%")
 		argIdx += 2
@@ -32,7 +31,6 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 
 	if statusFilter != "" && statusFilter != "all" && statusFilter != "All" {
 		if statusFilter == "BELUM_ABSEN" || statusFilter == "belum_absen" {
-			// Filter khusus: hanya yang belum absen (tidak ada record attendance hari ini)
 			where += ` AND a.id IS NULL`
 		} else {
 			where += fmt.Sprintf(` AND a.status = $%d`, argIdx)
@@ -63,6 +61,7 @@ func (r *AttendanceRepo) TodayByBranch(branchID int, search, statusFilter string
 		LEFT JOIN attendance a 
 			ON a.employee_id = e.id 
 			AND a.date = CURRENT_DATE
+			AND a.checkin_type = 'face_geo'  -- ← hanya absensi harian, bukan event
 		%s
 		ORDER BY 
 			CASE WHEN a.id IS NULL THEN 1 ELSE 0 END,
