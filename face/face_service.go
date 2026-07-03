@@ -520,7 +520,7 @@ func (s *Service) CheckinQREvent(
 	if err := s.Repo.MarkTokenConsumed(tx, ft.ID); err != nil {
 		return nil, err
 	}
-	if err := s.Repo.InsertVerificationLog(tx, employeeID, attendanceID, "checkin_event", ft.ConfidenceScore, ipAddress); err != nil {
+	if err := s.Repo.InsertVerificationLog(tx, employeeID, attendanceID, "checkin", ft.ConfidenceScore, ipAddress); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

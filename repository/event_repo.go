@@ -161,6 +161,7 @@ func (r *EventRepo) GetEventsByBranch(branchID int, status, date string) ([]mode
 	}
 	return results, nil
 }
+
 // GetEventByID — detail satu event, validasi branch supaya admin cabang
 // tidak bisa akses event cabang lain
 func (r *EventRepo) GetEventByID(eventID, branchID int) (*models.Event, error) {
@@ -290,8 +291,13 @@ func (r *EventRepo) GetEventAttendanceByDate(eventID, branchID int, date string)
 		AND e.branch_id = $2
 		%s
 		ORDER BY
-			gs.date ASC,
-			e.name ASC
+    CASE
+        WHEN a.check_in IS NOT NULL AND a.check_out IS NOT NULL THEN 0
+        WHEN a.check_in IS NOT NULL AND a.check_out IS NULL THEN 1
+        ELSE 2
+    END,
+    gs.date ASC,
+    e.name ASC
 	`, dateFilter)
 
 	rows, err := r.db.Query(query, args...)
@@ -342,6 +348,7 @@ func (r *EventRepo) GetEventAttendanceByDate(eventID, branchID int, date string)
 
 	return results, nil
 }
+
 // GenerateQRToken — generate token HMAC dan simpan ke qr_tokens
 // Kalau sudah ada token untuk event ini, langsung replace (ON CONFLICT)
 // Token expires sesuai end_time event
@@ -554,6 +561,7 @@ func (r *EventRepo) GetEventParticipantsList(eventID, branchID int, date string)
 	}
 	return results, nil
 }
+
 // SetParticipants — set ulang peserta event (replace semua)
 func (r *EventRepo) SetParticipants(eventID int, employeeIDs []int) error {
 	tx, err := r.db.Begin()
@@ -583,6 +591,7 @@ func (r *EventRepo) SetParticipants(eventID int, employeeIDs []int) error {
 
 	return nil
 }
+
 // RemoveParticipant — hapus 1 karyawan dari peserta event
 func (r *EventRepo) RemoveParticipant(eventID, employeeID int) (bool, error) {
 	result, err := r.db.Exec(`
@@ -710,7 +719,8 @@ func (r *EventRepo) GetEventAttendance(eventID, branchID int) ([]map[string]inte
 	}
 	return results, nil
 }
-//update event 
+
+// update event
 func (r *EventRepo) UpdateEvent(eventID, branchID int, req models.UpdateEventRequest) error {
 	expiresAtStr := req.EndDate + " " + req.EndTime + ":00"
 
