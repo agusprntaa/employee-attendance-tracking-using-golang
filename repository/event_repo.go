@@ -32,6 +32,7 @@ func (r *EventRepo) CreateEvent(branchID, createdBy int, req models.CreateEventR
 	qrCode := hex.EncodeToString(mac.Sum(nil))
 
 	var id int
+	log.Printf("INSERT EVENT -> Latitude: %f | Longitude: %f", req.Latitude, req.Longitude)
 	err := r.db.QueryRow(`
 		INSERT INTO events 
 			(branch_id, created_by, name, description, location,
@@ -194,7 +195,25 @@ func (r *EventRepo) GetEventByID(eventID, branchID int) (*models.Event, error) {
 }
 
 // GetEventSummary — summary peserta + absensi untuk GET /events/:id
-func (r *EventRepo) GetEventSummary(eventID, branchID int) (int, int, int, error) {
+func (r *EventRepo) GetEventSummary(eventID, branchID int, date string) (int, int, int, error) {
+	// Default date jika kosong
+	if date == "" {
+		var startDate, endDate time.Time
+		err := r.db.QueryRow(`
+			SELECT start_date, end_date FROM events WHERE id = $1 AND branch_id = $2
+		`, eventID, branchID).Scan(&startDate, &endDate)
+		if err == nil {
+			today := time.Now()
+			if today.Before(startDate) {
+				date = startDate.Format("2006-01-02")
+			} else if today.After(endDate) {
+				date = endDate.Format("2006-01-02")
+			} else {
+				date = today.Format("2006-01-02")
+			}
+		}
+	}
+
 	var totalParticipants, totalHadir int
 
 	err := r.db.QueryRow(`
@@ -206,8 +225,16 @@ func (r *EventRepo) GetEventSummary(eventID, branchID int) (int, int, int, error
 			ON a.employee_id = ep.employee_id
 			AND a.event_id = ep.event_id
 			AND a.checkin_type = 'qr_event'
+			AND a.date = $3::date
 		WHERE ep.event_id = $1
-	`, eventID).Scan(&totalParticipants, &totalHadir)
+		AND EXISTS (
+			SELECT 1 
+			FROM events e 
+			WHERE e.id = ep.event_id 
+			AND e.branch_id = $2
+		)
+	`, eventID, branchID, date).Scan(&totalParticipants, &totalHadir)
+
 	if err != nil {
 		return 0, 0, 0, err
 	}
