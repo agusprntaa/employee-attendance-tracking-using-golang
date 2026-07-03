@@ -6,6 +6,7 @@ import (
 	"absensi_karyawan/repository"
 	"absensi_karyawan/utils"
 	"database/sql"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -31,8 +32,14 @@ func (h *EventHandler) CreateEvent(c *fiber.Ctx) error {
 
 	var req models.CreateEventRequest
 	if err := c.BodyParser(&req); err != nil {
+		log.Printf("BODY PARSER ERROR: %v", err)
+		log.Printf("RAW BODY: %s", string(c.Body()))
 		return utils.BadRequest(c, "INVALID_BODY", "Request body tidak valid")
 	}
+
+	// Debug request setelah BodyParser
+	log.Printf("CreateEvent Request: %+v", req)
+	log.Printf("Latitude: %f | Longitude: %f", req.Latitude, req.Longitude)
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.StartDate = strings.TrimSpace(req.StartDate)
@@ -54,10 +61,12 @@ func (h *EventHandler) CreateEvent(c *fiber.Ctx) error {
 	if err != nil {
 		return utils.BadRequest(c, "INVALID_START_DATE", "Format tanggal mulai harus YYYY-MM-DD")
 	}
+
 	endDate, err := time.Parse("2006-01-02", req.EndDate)
 	if err != nil {
 		return utils.BadRequest(c, "INVALID_END_DATE", "Format tanggal selesai harus YYYY-MM-DD")
 	}
+
 	if endDate.Before(startDate) {
 		return utils.BadRequest(c, "INVALID_DATE_RANGE", "Tanggal selesai tidak boleh sebelum tanggal mulai")
 	}
@@ -66,10 +75,16 @@ func (h *EventHandler) CreateEvent(c *fiber.Ctx) error {
 		req.RadiusMeter = 100
 	}
 
+	// Debug sebelum masuk repository
+	log.Printf("SEND TO REPOSITORY -> Latitude: %f | Longitude: %f", req.Latitude, req.Longitude)
+
 	id, err := h.eventRepo.CreateEvent(*claims.BranchID, claims.UserID, req)
 	if err != nil {
+		log.Printf("CREATE EVENT ERROR: %v", err)
 		return utils.InternalError(c, "Gagal membuat event")
 	}
+
+	log.Printf("CREATE EVENT SUCCESS -> ID: %d", id)
 
 	return utils.Created(c, fiber.Map{
 		"id":           id,
@@ -371,25 +386,32 @@ func (h *EventHandler) GetEventByID(c *fiber.Ctx) error {
 		return utils.BadRequest(c, "INVALID_ID", "ID event tidak valid")
 	}
 
-	event, err := h.eventRepo.GetEventByID(eventID, *claims.BranchID)
-	if err != nil {
-		return utils.InternalError(c, "Gagal mengambil detail event")
-	}
+event, err := h.eventRepo.GetEventByID(eventID, *claims.BranchID)
+if err != nil {
+	log.Printf("GetEventByID ERROR: %v", err)
+	return utils.InternalError(c, "Gagal mengambil detail event")
+}
 	if event == nil {
 		return utils.NotFound(c, "Event tidak ditemukan")
 	}
 
-	// Ambil summary peserta
-	totalParticipants, totalHadir, totalBelum, err := h.eventRepo.GetEventSummary(eventID, *claims.BranchID)
-	if err != nil {
-		return utils.InternalError(c, "Gagal mengambil summary event")
-	}
+	// Ambil date dari query param, default ke hari ini / hari pertama / hari terakhir
+	date := c.Query("date", "")
 
-	// Generate dates
+	// Summary peserta berdasarkan tanggal
+	totalParticipants, totalHadir, totalBelum, err := h.eventRepo.GetEventSummary(eventID, *claims.BranchID, date)
+if err != nil {
+	log.Printf("GetEventSummary ERROR: %v", err)
+	return utils.InternalError(c, "Gagal mengambil summary event")
+}
+
+
+	// Generate list tanggal
 	dates, err := h.eventRepo.GetEventDateRange(eventID, *claims.BranchID)
-	if err != nil {
-		return utils.InternalError(c, "Gagal mengambil rentang tanggal event")
-	}
+if err != nil {
+	log.Printf("GetEventDateRange ERROR: %v", err)
+	return utils.InternalError(c, "Gagal mengambil rentang tanggal event")
+}
 
 	return utils.Success(c, fiber.Map{
 		"id":                 event.ID,
