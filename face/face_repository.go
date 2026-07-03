@@ -457,11 +457,17 @@ func (r *Repository) GetActiveEventsForEmployee(employeeID int) ([]EventListItem
 	var result []EventListItem
 	for rows.Next() {
 		var item EventListItem
+		var dateVal interface{}
 		if err := rows.Scan(
-			&item.EventID, &item.Name, &item.Location, &item.Date,
+			&item.EventID, &item.Name, &item.Location, &dateVal,
 			&item.StartTime, &item.EndTime, &item.AlreadyCheckedIn,
 		); err != nil {
 			return nil, err
+		}
+		if dateVal != nil {
+			if t, ok := dateVal.(time.Time); ok {
+				item.Date = t.Format("2006-01-02")
+			}
 		}
 		result = append(result, item)
 	}

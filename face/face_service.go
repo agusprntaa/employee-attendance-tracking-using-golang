@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"mime/multipart"
 	"time"
@@ -535,20 +536,18 @@ func (s *Service) CheckinQREvent(
 }
 
 func (s *Service) GenerateEventFaceToken(employeeID, eventID int) (*FaceTokenResponse, error) {
-	// 1. Karyawan harus punya wajah terdaftar (sama seperti WFO)
-	data, err := s.Repo.GetEmployeeFaceData(employeeID)
-	if err != nil {
-		return nil, err
-	}
-	if !data.FaceRegistered {
-		return nil, ErrFaceNotRegistered
-	}
 
-	// 2. Whitelist check
-	isParticipant, err := s.Repo.IsEventParticipant(employeeID, eventID)
+	// DEBUG — tambahkan ini sementara
+	log.Printf("DEBUG GenerateEventFaceToken — employeeID:%d eventID:%d", employeeID, eventID)
+
+	// Cek peserta
+	isParticipant, err := s.Repo.IsEventParticipant(eventID, employeeID)
 	if err != nil {
+		log.Printf("DEBUG IsEventParticipant ERROR: %v", err)
 		return nil, err
 	}
+	log.Printf("DEBUG IsEventParticipant — result:%v", isParticipant)
+
 	if !isParticipant {
 		return nil, ErrNotEventParticipant
 	}

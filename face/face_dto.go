@@ -118,5 +118,5 @@ type EventListItem struct {
 	Date             string `json:"date"`
 	StartTime        string `json:"start_time,omitempty"`
 	EndTime          string `json:"end_time,omitempty"`
-	AlreadyCheckedIn string `json:"already_checked_in"`
+	AlreadyCheckedIn bool   `json:"already_checked_in"`
 }

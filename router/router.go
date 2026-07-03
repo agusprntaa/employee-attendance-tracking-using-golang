@@ -126,5 +126,20 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	admin.Get("/holidays", leaveH.GetAllHolidays)
 	admin.Post("/holidays", leaveH.CreateHoliday)
 	admin.Delete("/holidays/:id", leaveH.DeleteHoliday)
+
+	// Repository
+	eventRepo := repository.NewEventRepo(db)
+
+	// Handler
+	eventH := handlers.NewEventHandler(eventRepo)
+
+	// Routes — tambahkan di bawah routes yang sudah ada
+	admin.Post("/events", eventH.CreateEvent)
+	admin.Get("/events", eventH.GetEvents)
+	admin.Get("/events/:id/qr", eventH.GetActiveQR)
+	admin.Get("/events/:id/attendance", eventH.GetEventAttendance)
+	admin.Delete("/events/:id", eventH.DeleteEvent)
+
 	return app
 }
+

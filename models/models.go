@@ -340,3 +340,60 @@ type CreateHolidayRequest struct {
 	Description string `json:"description"`
 	Category    string `json:"category"`
 }
+
+// ─── EVENT ───────────────────────────────────────────────────────────────────
+
+type Event struct {
+	ID                int     `json:"id"`
+	BranchID          int     `json:"branch_id"`
+	CreatedBy         int     `json:"created_by"`
+	Name              string  `json:"name"`
+	Description       string  `json:"description"`
+	Location          string  `json:"location"`
+	Latitude          float64 `json:"latitude"`
+	Longitude         float64 `json:"longitude"`
+	RadiusMeter       int     `json:"radius_meter"`
+	StartDate         string  `json:"start_date"`
+	EndDate           string  `json:"end_date"`
+	StartTime         string  `json:"start_time"`
+	EndTime           string  `json:"end_time"`
+	ExpiresAt         string  `json:"expires_at"`
+	CreatedAt         string  `json:"created_at"`
+	TotalParticipants int     `json:"total_participants"`
+	TotalPresent      int     `json:"total_present"`
+	Status            string  `json:"status"`
+}
+
+type CreateEventRequest struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Location    string  `json:"location"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	RadiusMeter int     `json:"radius_meter"`
+	StartDate   string  `json:"start_date"`
+	EndDate     string  `json:"end_date"`
+	StartTime   string  `json:"start_time"`
+	EndTime     string  `json:"end_time"`
+}
+type EventAttendance struct {
+	ID           int     `json:"id"`
+	EmployeeID   int     `json:"employee_id"`
+	EmployeeName string  `json:"employee_name"`
+	DivisionName string  `json:"division_name"`
+	CheckIn      string  `json:"check_in"`
+	Status       string  `json:"status"`
+	Distance     float64 `json:"distance_meter"`
+}
+type UpdateEventRequest struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Location    string  `json:"location"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	RadiusMeter int     `json:"radius_meter"`
+	StartDate   string  `json:"start_date"`
+	EndDate     string  `json:"end_date"`
+	StartTime   string  `json:"start_time"`
+	EndTime     string  `json:"end_time"`
+}

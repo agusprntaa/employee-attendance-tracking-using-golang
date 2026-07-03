@@ -6,6 +6,7 @@ import (
 	"absensi_karyawan/utils"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -1009,13 +1010,16 @@ func (r *GlobalAdminRepository) GetAllBranchAdmins(page, limit int, search, stat
 
 	rows, err := r.db.Query(dataQ, args...)
 	if err != nil {
-		return nil, 0, err
-	}
+    log.Printf("GET ALL BRANCH ADMINS ERROR: %v", err)
+    return nil, 0, err
+}
 	defer rows.Close()
 
 	var admins []models.EmployeeDetail
 	for rows.Next() {
 		var admin models.EmployeeDetail
+		var BranchID sql.NullInt64
+		var BranchName sql.NullString
 		err := rows.Scan(
 			&admin.ID,
 			&admin.Username,
@@ -1024,10 +1028,11 @@ func (r *GlobalAdminRepository) GetAllBranchAdmins(page, limit int, search, stat
 			&admin.Tipe,
 			&admin.Status,
 			&admin.CreatedAt,
-			&admin.BranchID,
-			&admin.BranchName,
+			&BranchID,
+			&BranchName,
 		)
 		if err != nil {
+			 log.Printf("SCAN ERROR: %v", err)
 			return nil, 0, err
 		}
 		admins = append(admins, admin)

@@ -149,6 +149,19 @@ func main() {
 	// Jalankan cron job reset kuota tiap 1 Januari jam 00:01 WITA
 	leave.StartCronJob(leaveRepo)
 
+go func() {
+    for {
+        now := time.Now()
+        next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 1, 0, 0, now.Location())
+        time.Sleep(time.Until(next))
+        eventRepo := repository.NewEventRepo(db)
+        if err := eventRepo.RegenerateAllEventQR(); err != nil {
+            log.Printf("CRON REGENERATE EVENT QR ERROR: %v", err)
+        }
+        log.Println("[CRON] QR event berhasil di-regenerate")
+    }
+}()
+
 	// =====================================================
 	// BE2 REPOSITORIES (ADMIN PANEL)
 	// =====================================================
@@ -582,6 +595,70 @@ func main() {
 		"/leave/recent-activity",
 		leaveH.GetRecentActivity,
 	)
+
+// EVENT MANAGEMENT — BARU
+// =====================================================
+
+eventRepo := repository.NewEventRepo(db)
+eventH := handlers.NewEventHandler(eventRepo)
+
+admin.Post(
+    "/events",
+    eventH.CreateEvent,
+)
+
+admin.Get(
+    "/events",
+    eventH.GetEvents,
+)
+
+// ← spesifik duluan sebelum /:id
+admin.Post(
+    "/events/:id/participants/select-all",
+    eventH.SelectAllParticipants,
+)
+
+
+admin.Get(
+    "/events/:id/participants",
+    eventH.GetParticipants,
+)
+
+admin.Post(
+    "/events/:id/participants",
+    eventH.SetParticipants,
+)
+
+admin.Delete(
+    "/events/:id/participants/:employee_id",
+    eventH.RemoveParticipant,
+)
+
+admin.Get(
+    "/events/:id/qr",
+    eventH.GetActiveQR,
+)
+
+admin.Get(
+    "/events/:id/attendance",
+    eventH.GetEventAttendance,
+)
+
+// ← umum di bawah
+admin.Get(
+    "/events/:id",
+    eventH.GetEventByID,
+)
+
+admin.Put(
+    "/events/:id",
+    eventH.UpdateEvent,
+)
+
+admin.Delete(
+    "/events/:id",
+    eventH.DeleteEvent,
+)
 
 	// =====================================================
 	// QR ROUTES
