@@ -46,6 +46,7 @@ var (
 	ErrNotEventParticipant  = errors.New("NOT_EVENT_PARTICIPANT")
 	ErrEventNotFound        = errors.New("EVENT_NOT_FOUND")
 	ErrEventExpired         = errors.New("EVENT_EXPIRED")
+	ErrEventNotStarted      = errors.New("EVENT_NOT_STARTED")
 )
 
 // ─────────────────────────────────────────
@@ -155,7 +156,7 @@ func (s *Service) RegisterFace(
 			return nil, ErrEngineError
 		}
 		if faceCount == 0 {
-			// ✦ DIUBAH: pakai %w supaya errors.Is(err, ErrNoFaceDetected) di handler tetap match,
+			// pakai %w supaya errors.Is(err, ErrNoFaceDetected) di handler tetap match,
 			// sambil tetap nyimpen info pose mana yang gagal di pesan errornya.
 			return nil, fmt.Errorf("%w: pose %s", ErrNoFaceDetected, pose)
 		}
@@ -537,22 +538,19 @@ func (s *Service) CheckinQREvent(
 
 func (s *Service) GenerateEventFaceToken(employeeID, eventID int) (*FaceTokenResponse, error) {
 
-	// DEBUG — tambahkan ini sementara
 	log.Printf("DEBUG GenerateEventFaceToken — employeeID:%d eventID:%d", employeeID, eventID)
 
-	// Cek peserta
+	// 1. Cek peserta
 	isParticipant, err := s.Repo.IsEventParticipant(eventID, employeeID)
 	if err != nil {
-		log.Printf("DEBUG IsEventParticipant ERROR: %v", err)
 		return nil, err
 	}
 	log.Printf("DEBUG IsEventParticipant — result:%v", isParticipant)
-
 	if !isParticipant {
 		return nil, ErrNotEventParticipant
 	}
 
-	// 3. Event masih aktif hari ini
+	// 2. Ambil data event
 	event, err := s.Repo.GetEventData(eventID)
 	if err == sql.ErrNoRows {
 		return nil, ErrEventNotFound
@@ -560,12 +558,31 @@ func (s *Service) GenerateEventFaceToken(employeeID, eventID int) (*FaceTokenRes
 	if err != nil {
 		return nil, err
 	}
+
+	// 3. Validasi rentang tanggal dan expires_at
 	now := time.Now()
-	if event.Date.Format("2006-01-02") != now.Format("2006-01-02") || now.After(event.ExpiresAt) {
+	today := now.Format("2006-01-02")
+	startDate := event.Date.Format("2006-01-02")
+	endDate := event.EndDate.Format("2006-01-02")
+
+	if today < startDate || today > endDate || now.After(event.ExpiresAt) {
 		return nil, ErrEventExpired
 	}
 
-	// 4. Belum pernah absen event ini
+	// 4. validasi jam mulai
+	// Hanya dijalankan kalau admin mengisi start_time
+	if !event.StartTime.IsZero() {
+		eventStart := time.Date(
+			now.Year(), now.Month(), now.Day(),
+			event.StartTime.Hour(), event.StartTime.Minute(), 0, 0,
+			now.Location(),
+		)
+		if now.Before(eventStart) {
+			return nil, ErrEventNotStarted
+		}
+	}
+
+	// 5. Cek sudah absen event ini hari ini
 	attended, err := s.Repo.HasAttendedEvent(employeeID, eventID)
 	if err != nil {
 		return nil, err
@@ -574,7 +591,7 @@ func (s *Service) GenerateEventFaceToken(employeeID, eventID int) (*FaceTokenRes
 		return nil, ErrAlreadyAttendedEvent
 	}
 
-	// 5. Generate token, simpan dengan event_id
+	// 6. Generate token
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, fmt.Errorf("gagal generate token: %w", err)

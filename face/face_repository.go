@@ -45,7 +45,9 @@ type EventData struct {
 	RadiusMeter int
 	BranchID    int
 	Date        time.Time
+	EndDate     time.Time
 	ExpiresAt   time.Time
+	StartTime   time.Time
 }
 
 // ─────────────────────────────────────────
@@ -358,18 +360,31 @@ func (r *Repository) GetEventData(eventID int) (*EventData, error) {
 	var lat, lon sql.NullFloat64
 	var radius sql.NullInt64
 	var branchID sql.NullInt64
+	var startTime sql.NullTime
+
 	err := r.DB.QueryRow(`
-		SELECT id, name, latitude, longitude, radius_meter, branch_id, date, expires_at
-		FROM events
-		WHERE id = $1
-	`, eventID).Scan(&e.ID, &e.Name, &lat, &lon, &radius, &branchID, &e.Date, &e.ExpiresAt)
+        SELECT id, name, latitude, longitude, radius_meter,
+               branch_id, start_date, end_date, expires_at, start_time
+        FROM events
+        WHERE id = $1
+    `, eventID).Scan(
+		&e.ID, &e.Name, &lat, &lon, &radius,
+		&branchID, &e.Date, &e.EndDate, &e.ExpiresAt, &startTime,
+	)
 	if err != nil {
 		return nil, err
 	}
 	e.Latitude = lat.Float64
 	e.Longitude = lon.Float64
 	e.RadiusMeter = int(radius.Int64)
-	e.BranchID = int(branchID.Int64) // 0 kalau NULL
+	e.BranchID = int(branchID.Int64)
+
+	// Kalau start_time diisi, simpan ke struct
+	// Kalau NULL, StartTime tetap zero value (time.Time{})
+	if startTime.Valid {
+		e.StartTime = startTime.Time
+	}
+
 	return &e, nil
 }
 
@@ -377,7 +392,9 @@ func (r *Repository) HasAttendedEvent(employeeID, eventID int) (bool, error) {
 	var count int
 	err := r.DB.QueryRow(`
 		SELECT COUNT(*) FROM attendance
-		WHERE employee_id = $1 AND event_id = $2
+		WHERE employee_id = $1
+		  AND event_id = $2
+		  AND date = CURRENT_DATE
 	`, employeeID, eventID).Scan(&count)
 	return count > 0, err
 }
@@ -436,17 +453,21 @@ func (r *Repository) IsEventParticipant(eventID, employeeID int) (bool, error) {
 
 func (r *Repository) GetActiveEventsForEmployee(employeeID int) ([]EventListItem, error) {
 	rows, err := r.DB.Query(`
-		SELECT e.id, e.name, COALESCE(e. location, ''), e.date,
-		COALESCE(TO_CHAR(e.start_time, 'HH24:MI'), ''),
+		SELECT e.id, e.name, COALESCE(e.location, ''), e.start_date,
+		       COALESCE(TO_CHAR(e.start_time, 'HH24:MI'), ''),
 		       COALESCE(TO_CHAR(e.end_time, 'HH24:MI'), ''),
 		       EXISTS (
 		           SELECT 1 FROM attendance a
-		           WHERE a.employee_id = $1 AND a.event_id = e.id AND a.checkin_type = 'qr_event'
+		           WHERE a.employee_id = $1
+		             AND a.event_id = e.id
+		             AND a.checkin_type = 'qr_event'
+		             AND a.date = CURRENT_DATE
 		       )
 		FROM events e
-		INNER JOIN event_participants ep ON ep.event_id = e.id AND ep.employee_id = $1
-		WHERE e.date = CURRENT_DATE
-		  AND e.expires_at > NOW()
+		INNER JOIN event_participants ep
+		    ON ep.event_id = e.id AND ep.employee_id = $1
+		WHERE CURRENT_DATE BETWEEN e.start_date AND e.end_date
+		  AND NOW() < e.expires_at
 		ORDER BY e.start_time NULLS LAST
 	`, employeeID)
 	if err != nil {
@@ -459,8 +480,13 @@ func (r *Repository) GetActiveEventsForEmployee(employeeID int) ([]EventListItem
 		var item EventListItem
 		var dateVal interface{}
 		if err := rows.Scan(
-			&item.EventID, &item.Name, &item.Location, &dateVal,
-			&item.StartTime, &item.EndTime, &item.AlreadyCheckedIn,
+			&item.EventID,
+			&item.Name,
+			&item.Location,
+			&dateVal,
+			&item.StartTime,
+			&item.EndTime,
+			&item.AlreadyCheckedIn,
 		); err != nil {
 			return nil, err
 		}
