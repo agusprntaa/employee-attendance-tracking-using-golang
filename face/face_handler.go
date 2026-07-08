@@ -15,7 +15,7 @@ type Handler struct {
 
 // errorMessage — mapping error ke HTTP status + kode + pesan user-friendly
 //
-// ✦ DIUBAH: dari `switch err { case ErrX: }` (exact identity match)
+// dari `switch err { case ErrX: }` (exact identity match)
 // menjadi `switch { case errors.Is(err, ErrX): }`.
 //
 // Alasan: RegisterFace di service.go membungkus sentinel error dengan
@@ -66,6 +66,8 @@ func errorMessage(err error) (int, string, string) {
 		return 404, "EVENT_NOT_FOUND", "Event tidak ditemukan"
 	case errors.Is(err, ErrEventExpired):
 		return 410, "EVENT_EXPIRED", "Event sudah berakhir atau bukan untuk hari ini"
+	case errors.Is(err, ErrEventNotStarted):
+		return 400, "EVENT_NOT_STARTED", "Event belum dimulai, silakan coba lagi nanti"
 	default:
 		return 500, "INTERNAL_ERROR", "Terjadi kesalahan server"
 	}

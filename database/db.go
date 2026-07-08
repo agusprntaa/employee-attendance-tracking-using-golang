@@ -2,32 +2,42 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
 
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
 func ConnectDB() *sql.DB {
-	// ✅ FIX: tambah TimeZone=Asia/Makassar agar lib/pq membaca timestamp
-	// dari PostgreSQL langsung dalam WITA, bukan UTC.
-	connStr := "host=localhost user=postgres password=agusadi1 dbname=absensi_karyawanBTW port=5432 sslmode=disable TimeZone=Asia/Makassar"
+
+	godotenv.Load()
+
+	connStr := fmt.Sprintf(
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_NAME"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_SSLMODE"),
+		os.Getenv("DB_TIMEZONE"),
+	)
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatal("DB Open Error:", err)
+		log.Fatal(err)
 	}
 
-	err = db.Ping()
+	if err = db.Ping(); err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = db.Exec("SET timezone='Asia/Makassar'")
 	if err != nil {
-		log.Fatal("DB Connection Error:", err)
+		log.Fatal(err)
 	}
 
-	// ✅ FIX: SET timezone di level session sebagai lapisan kedua —
-	// memastikan timezone tetap berlaku meski connection di-pool ulang.
-	_, err = db.Exec("SET timezone = 'Asia/Makassar'")
-	if err != nil {
-		log.Fatal("DB Set Timezone Error:", err)
-	}
-
-	log.Println("Connected to DB successfully (timezone: Asia/Makassar / WITA)")
 	return db
 }
