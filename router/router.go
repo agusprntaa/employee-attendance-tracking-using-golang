@@ -128,7 +128,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 	admin.Delete("/holidays/:id", leaveH.DeleteHoliday)
 
 	// Repository
-	eventRepo := repository.NewEventRepo(db)
+	eventRepo := repository.NewEventRepo(db, cfg.QRSecret)
 
 	// Handler
 	eventH := handlers.NewEventHandler(eventRepo)
@@ -142,4 +142,3 @@ func SetupRouter(db *sql.DB, cfg *config.Config) *fiber.App {
 
 	return app
 }
-

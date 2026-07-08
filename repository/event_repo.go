@@ -8,16 +8,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"os"
 	"time"
 )
 
 type EventRepo struct {
-	db *sql.DB
+	db       *sql.DB
+	qrSecret string
 }
 
-func NewEventRepo(db *sql.DB) *EventRepo {
-	return &EventRepo{db: db}
+func NewEventRepo(db *sql.DB, qrSecret string) *EventRepo {
+	if qrSecret == "" {
+		panic("EventRepo: qrSecret tidak boleh kosong")
+	}
+	return &EventRepo{db: db, qrSecret: qrSecret}
 }
 
 // CreateEvent — buat event baru, qr_code dikosongkan dulu
@@ -25,7 +28,7 @@ func NewEventRepo(db *sql.DB) *EventRepo {
 func (r *EventRepo) CreateEvent(branchID, createdBy int, req models.CreateEventRequest) (int, error) {
 	expiresAtStr := req.EndDate + " " + req.EndTime + ":00"
 
-	secret := os.Getenv("QR_SECRET")
+	secret := r.qrSecret
 	raw := fmt.Sprintf("event:%d:%s:%s", branchID, req.StartDate, time.Now().Format("15:04:05.000"))
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(raw))
@@ -353,7 +356,7 @@ func (r *EventRepo) GetEventAttendanceByDate(eventID, branchID int, date string)
 // Kalau sudah ada token untuk event ini, langsung replace (ON CONFLICT)
 // Token expires sesuai end_time event
 func (r *EventRepo) GenerateQRToken(eventID, branchID int, expiresAt time.Time) (string, error) {
-	secret := os.Getenv("QR_SECRET")
+	secret := r.qrSecret
 	raw := fmt.Sprintf("event:%d:%d:%s", eventID, branchID, time.Now().Format("2006-01-02 15:04:05"))
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(raw))

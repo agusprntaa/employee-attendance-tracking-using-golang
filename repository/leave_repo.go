@@ -642,18 +642,18 @@ func (r *LeaveRepo) GetRecentActivity(branchID int, limit int) ([]map[string]int
 		message := employeeName + " submitted leave request"
 		activityTime := createdAt
 
-		if status == "approved" {
+		switch status {
+		case "approved":
 			activityType = "approved"
 			message = "Admin approved leave for " + employeeName
-			if updatedAt.Valid {
-				activityTime = updatedAt.Time
-			}
-		} else if status == "rejected" {
+
+		case "rejected":
 			activityType = "rejected"
 			message = "Admin rejected leave for " + employeeName
-			if updatedAt.Valid {
-				activityTime = updatedAt.Time
-			}
+		}
+
+		if updatedAt.Valid && status != "pending" {
+			activityTime = updatedAt.Time
 		}
 
 		results = append(results, map[string]interface{}{
